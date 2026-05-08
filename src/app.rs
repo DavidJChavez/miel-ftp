@@ -99,11 +99,11 @@ pub fn boot() -> (State, Task<Message>) {
     let state = State {
         connections: vec![Connection {
             id: Uuid::new_v4(),
-            name: String::from("producción"),
-            host: String::from("ftp.miservidor.com"),
-            port: 21,
-            username: String::from("user"),
-            password: String::from("pass"),
+            name: String::from("Prueba"),
+            host: String::from("127.0.0.1"),
+            port: 2121,
+            username: String::from("david"),
+            password: String::from("password"),
         }],
         selected_connection: None,
         remote_status: ConnectionStatus::Disconnected,
@@ -129,7 +129,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ConnectionSelected(id) => {
             state.selected_connection = Some(id);
-            Task::none()
+            state.remote_status = ConnectionStatus::Connecting;
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+            Task::perform(
+                crate::ftp::client::list_dir(conn, String::from("/")),
+                Message::RemoteDirLoaded,
+            )
         }
         Message::LocalDirLoaded(Ok((path, entries))) => {
             state.local_path = path;
@@ -140,10 +148,107 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             eprintln!("error loading local dir: {e}");
             Task::none()
         }
-        Message::LocalGoUp
-        | Message::LocalRefresh
-        | Message::RemoteGoUp
-        | Message::RemoteRefresh => Task::none(),
+        Message::ConnectPressed => {
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            state.remote_status = ConnectionStatus::Connecting;
+
+            Task::perform(
+                crate::ftp::client::list_dir(conn, String::from("/")),
+                Message::RemoteDirLoaded,
+            )
+        }
+        Message::RemoteDirLoaded(Ok((path, entries))) => {
+            state.remote_status = ConnectionStatus::Connected;
+            state.remote_path = path;
+            state.remote_entries = entries;
+            Task::none()
+        }
+        Message::RemoteDirLoaded(Err(e)) => {
+            eprintln!("ftp error: {e}");
+            state.remote_status = ConnectionStatus::Error(e);
+            Task::none()
+        }
+        Message::RemoteEntryOpened(entry) => {
+            if !entry.is_dir {
+                return Task::none();
+            }
+
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            let new_path = format!("{}/{}", state.remote_path.trim_end_matches('/'), entry.name);
+
+            Task::perform(
+                crate::ftp::client::list_dir(conn, new_path),
+                Message::RemoteDirLoaded,
+            )
+        }
+        Message::LocalEntryOpened(entry) => {
+            if !entry.is_dir {
+                return Task::none();
+            }
+
+            let new_path = format!("{}/{}", state.local_path.trim_end_matches('/'), entry.name);
+
+            Task::perform(load_local_dir(new_path), Message::LocalDirLoaded)
+        }
+        Message::LocalGoUp => {
+            let parent = std::path::Path::new(&state.local_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| state.local_path.clone());
+
+            Task::perform(load_local_dir(parent), Message::LocalDirLoaded)
+        }
+        Message::RemoteGoUp => {
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            let parent = std::path::Path::new(&state.remote_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| String::from("/"));
+
+            Task::perform(
+                crate::ftp::client::list_dir(conn, parent),
+                Message::RemoteDirLoaded,
+            )
+        }
+        Message::LocalRefresh => Task::perform(
+            load_local_dir(state.local_path.clone()),
+            Message::LocalDirLoaded,
+        ),
+        Message::RemoteRefresh => {
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                crate::ftp::client::list_dir(conn.clone(), state.remote_path.clone()),
+                Message::RemoteDirLoaded,
+            )
+        }
         _ => Task::none(),
     }
 }
