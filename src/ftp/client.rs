@@ -1,6 +1,89 @@
+use std::path::PathBuf;
 use suppaftp::{AsyncFtpStream, FtpError};
+use tokio::io::AsyncReadExt;
 
 use crate::app::{Connection, FtpEntry};
+
+pub async fn upload(
+    conn: Connection,
+    local_path: PathBuf,
+    remote_path: String,
+) -> Result<(), String> {
+    let addr = format!("{}:{}", conn.host, conn.port);
+
+    let mut ftp = AsyncFtpStream::connect(&addr)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ftp.login(&conn.username, &conn.password)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ftp.cwd(&remote_path).await.map_err(|e| e.to_string())?;
+
+    let file_bytes = tokio::fs::read(&local_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let filename = local_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("archivo")
+        .to_string();
+
+    let mut cursor = futures::io::Cursor::new(file_bytes);
+
+    ftp.put_file(&filename, &mut cursor)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let _ = ftp.quit().await;
+
+    Ok(())
+}
+
+pub async fn download(
+    conn: Connection,
+    remote_path: String,
+    filename: String,
+    local_dir: PathBuf,
+) -> Result<(), String> {
+    let addr = format!("{}:{}", conn.host, conn.port);
+
+    let mut ftp = AsyncFtpStream::connect(&addr)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ftp.login(&conn.username, &conn.password)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ftp.cwd(&remote_path).await.map_err(|e| e.to_string())?;
+
+    let mut stream = ftp
+        .retr_as_stream(&filename)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut data = Vec::new();
+    futures::io::AsyncReadExt::read_to_end(&mut stream, &mut data)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ftp.finalize_retr_stream(stream)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let dest = local_dir.join(&filename);
+
+    tokio::fs::write(&dest, data)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let _ = ftp.quit().await;
+
+    Ok(())
+}
 
 pub async fn connect(conn: Connection) -> Result<(), String> {
     let addr = format!("{}:{}", conn.host, conn.port);

@@ -1,5 +1,3 @@
-use std::fmt::format;
-
 use iced::{
     Alignment, Border, Element, Length, Padding,
     widget::{button, column, container, row, scrollable, text},
@@ -8,8 +6,8 @@ use iced::{
 use crate::{
     app::{FtpEntry, Message},
     ui::theme::{
-        ACCENT, BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER, BORDER_SUBTLE, SUCCESS, TEXT_DIM,
-        TEXT_MUTED, TEXT_PRIMARY,
+        BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER_SUBTLE, SUCCESS, TEXT_DIM, TEXT_MUTED,
+        TEXT_PRIMARY,
     },
 };
 
@@ -24,6 +22,7 @@ pub fn file_panel<'a>(
     path: &'a str,
     entries: &'a [FtpEntry],
     is_connected: bool,
+    selected: Option<&'a str>,
 ) -> Element<'a, Message> {
     let (icon, label, label_color) = match kind {
         PanelKind::Local => ("💻", "local", TEXT_MUTED),
@@ -46,15 +45,31 @@ pub fn file_panel<'a>(
                 match kind {
                     PanelKind::Local => Message::LocalGoUp,
                     PanelKind::Remote => Message::RemoteGoUp,
-                }
+                },
+                true
             ),
             action_btn(
                 "↺",
                 match kind {
                     PanelKind::Local => Message::LocalRefresh,
                     PanelKind::Remote => Message::RemoteRefresh,
-                }
+                },
+                true
             ),
+            action_btn(
+                match kind {
+                    PanelKind::Local => "↑ subir",
+                    PanelKind::Remote => "↓ bajar",
+                },
+                match kind {
+                    PanelKind::Local => Message::UploadPressed,
+                    PanelKind::Remote => Message::DownloadPressed,
+                },
+                match kind {
+                    PanelKind::Local => selected.is_some(),
+                    PanelKind::Remote => selected.is_some() && is_connected,
+                }
+            )
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -81,9 +96,9 @@ pub fn file_panel<'a>(
     let col_headers = container(
         row![
             text("").size(10).width(20),
-            text("nombre").size(10).color(TEXT_DIM).width(Length::Fill),
-            text("tamaño").size(10).color(TEXT_DIM).width(80),
-            text("modificado").size(10).color(TEXT_DIM).width(90),
+            text("name").size(10).color(TEXT_DIM).width(Length::Fill),
+            text("size").size(10).color(TEXT_DIM).width(80),
+            text("modified").size(10).color(TEXT_DIM).width(90),
         ]
         .spacing(6),
     )
@@ -103,9 +118,9 @@ pub fn file_panel<'a>(
         vec![
             container(
                 text(if is_connected || matches!(kind, PanelKind::Local) {
-                    "carpeta vacía"
+                    "Empty folder"
                 } else {
-                    "sin conexión"
+                    "Offline"
                 })
                 .size(12)
                 .color(TEXT_DIM),
@@ -115,7 +130,10 @@ pub fn file_panel<'a>(
             .into(),
         ]
     } else {
-        entries.iter().map(|entry| file_row(entry, kind)).collect()
+        entries
+            .iter()
+            .map(|entry| file_row(entry, kind, selected))
+            .collect()
     };
 
     let list = scrollable(column(file_rows)).height(Length::Fill);
@@ -126,7 +144,31 @@ pub fn file_panel<'a>(
         .into()
 }
 
-fn file_row<'a>(entry: &'a FtpEntry, kind: &'a PanelKind) -> Element<'a, Message> {
+fn file_row<'a>(
+    entry: &'a FtpEntry,
+    kind: &'a PanelKind,
+    selected: Option<&'a str>,
+) -> Element<'a, Message> {
+    let is_selected = selected == Some(entry.name.as_str());
+
+    let on_press = if entry.is_dir {
+        match kind {
+            PanelKind::Local => Message::LocalEntryOpened(entry.clone()),
+            PanelKind::Remote => Message::RemoteEntryOpened(entry.clone()),
+        }
+    } else {
+        match kind {
+            PanelKind::Local => Message::LocalFileSelected(entry.name.clone()),
+            PanelKind::Remote => Message::RemoteFileSelected(entry.name.clone()),
+        }
+    };
+
+    let bg = if is_selected {
+        BG_SELECTED
+    } else {
+        iced::Color::TRANSPARENT
+    };
+
     let icon = if entry.is_dir { "📁" } else { "📄" };
 
     let size_str = match entry.size {
@@ -137,18 +179,6 @@ fn file_row<'a>(entry: &'a FtpEntry, kind: &'a PanelKind) -> Element<'a, Message
     };
 
     let modified_str = entry.modified.clone().unwrap_or_else(|| String::from("-"));
-
-    let on_press = if entry.is_dir {
-        match kind {
-            PanelKind::Local => Message::LocalEntryOpened(entry.clone()),
-            PanelKind::Remote => Message::RemoteEntryOpened(entry.clone()),
-        }
-    } else {
-        match kind {
-            PanelKind::Local => Message::UploadPressed(entry.clone()),
-            PanelKind::Remote => Message::DownloadPressed(entry.clone()),
-        }
-    };
 
     button(
         row![
@@ -166,11 +196,11 @@ fn file_row<'a>(entry: &'a FtpEntry, kind: &'a PanelKind) -> Element<'a, Message
     .on_press(on_press)
     .width(Length::Fill)
     .padding([5, 12])
-    .style(|_, status| button::Style {
+    .style(move |_, status| button::Style {
         background: Some(iced::Background::Color(match status {
             button::Status::Hovered => BG_HOVER,
             button::Status::Pressed => BG_SELECTED,
-            _ => iced::Color::TRANSPARENT,
+            _ => bg,
         })),
         text_color: TEXT_PRIMARY,
         border: Border::default(),
@@ -179,21 +209,29 @@ fn file_row<'a>(entry: &'a FtpEntry, kind: &'a PanelKind) -> Element<'a, Message
     .into()
 }
 
-fn action_btn(label: &str, msg: Message) -> Element<Message> {
-    button(text(label).size(14).color(TEXT_MUTED))
-        .on_press(msg)
-        .style(|_, status| button::Style {
-            background: Some(iced::Background::Color(match status {
-                button::Status::Hovered => BG_HOVER,
-                _ => iced::Color::TRANSPARENT,
-            })),
-            border: Border {
-                radius: 5.0.into(),
-                ..Border::default()
-            },
-            text_color: TEXT_MUTED,
-            ..button::Style::default()
-        })
-        .padding([3, 6])
-        .into()
+fn action_btn(label: &str, msg: Message, enabled: bool) -> Element<Message> {
+    let btn = button(
+        text(label)
+            .size(12)
+            .color(if enabled { TEXT_MUTED } else { TEXT_DIM }),
+    )
+    .style(move |_, status| button::Style {
+        background: Some(iced::Background::Color(match status {
+            button::Status::Hovered if enabled => BG_HOVER,
+            _ => iced::Color::TRANSPARENT,
+        })),
+        border: Border {
+            radius: 5.0.into(),
+            ..Border::default()
+        },
+        text_color: if enabled { TEXT_MUTED } else { TEXT_DIM },
+        ..button::Style::default()
+    })
+    .padding([3, 8]);
+
+    if enabled {
+        btn.on_press(msg).into()
+    } else {
+        btn.into()
+    }
 }

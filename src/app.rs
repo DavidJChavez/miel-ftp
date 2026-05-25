@@ -1,99 +1,13 @@
 use iced::{Element, Length, Task, Theme};
 use uuid::Uuid;
 
-use crate::ui::file_panel::file_panel;
-
-#[derive(Debug, Clone)]
-pub struct Connection {
-    pub id: Uuid,
-    pub name: String,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: String, // TODO: encryptar con keyring en v2
-}
-
-#[derive(Debug, Clone)]
-pub struct FtpEntry {
-    pub name: String,
-    pub is_dir: bool,
-    pub size: Option<u64>,        // None si es directorio
-    pub modified: Option<String>, // Simplificado por ahora
-}
-
-#[derive(Debug, Clone)]
-pub enum ConnectionStatus {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct Transfer {
-    pub filename: String,
-    pub total: u64,
-    pub transferred: u64,
-}
-
-impl Transfer {
-    pub fn progress(&self) -> f32 {
-        if self.total == 0 {
-            return 0.0;
-        }
-        self.transferred as f32 / self.total as f32
-    }
-}
-
-pub struct State {
-    // Sidebar
-    pub connections: Vec<Connection>,
-    pub selected_connection: Option<Uuid>,
-
-    // Remote dashboard
-    pub remote_status: ConnectionStatus,
-    pub remote_path: String,
-    pub remote_entries: Vec<FtpEntry>,
-
-    // Local dashboard
-    pub local_path: String,
-    pub local_entries: Vec<FtpEntry>,
-
-    // Active transfer
-    pub active_transfer: Option<Transfer>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    // Sidebar
-    ConnectionSelected(Uuid),
-    AddConnectionPressed,
-
-    // FTP Connection
-    ConnectPressed,
-    Disconnected,
-    ConnectResult(Result<(), String>),
-
-    // Remote navigation
-    RemoteEntryOpened(FtpEntry),
-    RemoteDirLoaded(Result<(String, Vec<FtpEntry>), String>),
-
-    // Local navigation
-    LocalEntryOpened(FtpEntry),
-    LocalDirLoaded(Result<(String, Vec<FtpEntry>), String>),
-
-    // Transfer
-    UploadPressed(FtpEntry),
-    DownloadPressed(FtpEntry),
-    TransferProgress(u64),
-    TransferComplete,
-    TransferError(String),
-
-    LocalGoUp,
-    LocalRefresh,
-    RemoteGoUp,
-    RemoteRefresh,
-}
+use crate::models::state::State;
+pub use crate::models::{
+    connection::{Connection, ConnectionStatus},
+    ftp_entry::FtpEntry,
+    message::Message,
+    transfer::Transfer,
+};
 
 pub fn boot() -> (State, Task<Message>) {
     let state = State {
@@ -109,8 +23,10 @@ pub fn boot() -> (State, Task<Message>) {
         remote_status: ConnectionStatus::Disconnected,
         remote_path: String::from("/"),
         remote_entries: vec![],
+        selected_remote: None,
         local_path: String::from("/"),
         local_entries: vec![],
+        selected_local: None,
         active_transfer: None,
     };
 
@@ -249,50 +165,184 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 Message::RemoteDirLoaded,
             )
         }
+
+        // Transfer
+        Message::LocalFileSelected(name) => {
+            state.selected_local = Some(name);
+            Task::none()
+        }
+
+        Message::RemoteFileSelected(name) => {
+            state.selected_remote = Some(name);
+            Task::none()
+        }
+
+        Message::UploadPressed => {
+            let Some(filename) = state.selected_local.clone() else {
+                return Task::none();
+            };
+
+            let entry = state
+                .local_entries
+                .iter()
+                .find(|e| e.name == filename)
+                .cloned();
+            let Some(entry) = entry else {
+                return Task::none();
+            };
+
+            if entry.is_dir {
+                return Task::none();
+            }
+
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            let local_path = std::path::PathBuf::from(&state.local_path).join(&entry.name);
+
+            state.active_transfer = Some(Transfer {
+                filename: entry.name.clone(),
+                is_upload: true,
+            });
+
+            Task::perform(
+                crate::ftp::client::upload(conn, local_path, state.remote_path.clone()),
+                |result| match result {
+                    Ok(_) => Message::TransferComplete(String::new()),
+                    Err(e) => Message::TransferError(e),
+                },
+            )
+        }
+
+        Message::DownloadPressed => {
+            let Some(filename) = state.selected_remote.clone() else {
+                return Task::none();
+            };
+            let entry = state
+                .remote_entries
+                .iter()
+                .find(|e| e.name == filename)
+                .cloned();
+            let Some(entry) = entry else {
+                return Task::none();
+            };
+
+            if entry.is_dir {
+                return Task::none();
+            }
+
+            let Some(id) = state.selected_connection else {
+                return Task::none();
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::none();
+            };
+
+            let local_dir = std::path::PathBuf::from(&state.local_path);
+
+            state.active_transfer = Some(Transfer {
+                filename: entry.name.clone(),
+                is_upload: false,
+            });
+
+            Task::perform(
+                crate::ftp::client::download(
+                    conn,
+                    state.remote_path.clone(),
+                    entry.name.clone(),
+                    local_dir,
+                ),
+                |result| match result {
+                    Ok(_) => Message::TransferComplete(String::new()),
+                    Err(e) => Message::TransferError(e),
+                },
+            )
+        }
+
+        Message::TransferComplete(_) => {
+            state.active_transfer = None;
+
+            // Refresh both dashboards
+            let local_path = state.local_path.clone();
+            let remote_path = state.remote_path.clone();
+
+            let Some(id) = state.selected_connection else {
+                return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
+            };
+
+            let Some(conn) = state.connections.iter().find(|c| c.id == id).cloned() else {
+                return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
+            };
+
+            Task::batch([
+                Task::perform(load_local_dir(local_path), Message::LocalDirLoaded),
+                Task::perform(
+                    crate::ftp::client::list_dir(conn, remote_path),
+                    Message::RemoteDirLoaded,
+                ),
+            ])
+        }
+
+        Message::TransferError(e) => {
+            eprintln!("transfer error: {e}");
+            state.active_transfer = None;
+            Task::none()
+        }
+
         _ => Task::none(),
     }
 }
 
 pub fn view(state: &State) -> Element<Message> {
     use crate::ui::file_panel::{PanelKind, file_panel};
-    use iced::widget::{container, row};
+    use iced::widget::{column, container, row};
 
     let is_connected = matches!(state.remote_status, ConnectionStatus::Connected);
 
-    let divider = container(iced::widget::Space::new().width(1))
-        .height(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Background::Color(crate::ui::theme::BORDER_SUBTLE)),
-            ..container::Style::default()
-        });
+    let divider = |color| {
+        container(iced::widget::Space::new().width(1))
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(color)),
+                ..container::Style::default()
+            })
+    };
 
-    row![
+    let panels = row![
         crate::ui::sidebar::sidebar(
             &state.connections,
             state.selected_connection,
             &state.remote_status,
         ),
-        container(iced::widget::Space::new().width(1))
-            .height(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(crate::ui::theme::BORDER)),
-                ..container::Style::default()
-            }),
+        divider(crate::ui::theme::BORDER),
         file_panel(
             &PanelKind::Local,
             &state.local_path,
             &state.local_entries,
-            true
+            true,
+            state.selected_local.as_deref()
         ),
-        divider,
+        divider(crate::ui::theme::BORDER_SUBTLE),
         file_panel(
             &PanelKind::Remote,
             &state.remote_path,
             &state.remote_entries,
-            is_connected
+            is_connected,
+            state.selected_remote.as_deref()
         ),
     ]
-    .height(iced::Length::Fill)
+    .height(iced::Length::Fill);
+
+    column![
+        panels,
+        crate::ui::transfer_bar::transfer_bar(state.active_transfer.as_ref()),
+    ]
     .into()
 }
 

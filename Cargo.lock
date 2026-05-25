@@ -1965,6 +1965,7 @@ name = "miel-ftp"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "futures",
  "iced",
  "serde",
  "serde_json",
