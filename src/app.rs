@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::config::{load_connections, save_connections};
 use crate::error::{AppError, AppErrorMsg};
-use crate::ftp::client;
+use crate::ftp::{self, FtpSessionManager};
 use crate::models::{
     connection::{Connection, ConnectionStatus},
     connection_form::ConnectionForm,
@@ -45,6 +45,7 @@ pub fn boot() -> (State, Task<Message>) {
         transfer_bytes: 0,
         status_message: None,
         ftp_log: FtpLog::default(),
+        ftp_manager: FtpSessionManager::new(),
     };
 
     (
@@ -56,6 +57,7 @@ pub fn boot() -> (State, Task<Message>) {
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ConnectionSelected(id) => {
+            let prev = state.selected_connection;
             state.selected_connection = Some(id);
             state.remote_status = ConnectionStatus::Connecting;
             state.status_message = None;
@@ -63,8 +65,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             let Some(conn) = state.connection_cloned(id) else {
                 return Task::none();
             };
+            let mgr = state.ftp_manager.clone();
             Task::perform(
-                map_list_dir(conn, String::from("/")),
+                map_list_dir(mgr, conn, String::from("/"), prev),
                 Message::RemoteDirLoaded,
             )
         }
@@ -200,6 +203,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.connections.retain(|c| c.id != id);
             let _ = Connection::delete_password(id);
+            let mgr = state.ftp_manager.clone();
 
             if let Err(e) = save_connections(&state.connections) {
                 state.status_message = Some(format!("Error al guardar: {e}"));
@@ -212,7 +216,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.connection_form = None;
                 state.status_message = Some("Conexión eliminada".into());
             }
-            Task::done(Message::ConnectionDeleted)
+            Task::batch([
+                Task::perform(
+                    async move {
+                        mgr.disconnect(id).await;
+                    },
+                    |_| Message::Noop,
+                ),
+                Task::done(Message::ConnectionDeleted),
+            ])
         }
 
         Message::ConnectionDeleted => Task::none(),
@@ -228,7 +240,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.remote_status = ConnectionStatus::Connecting;
 
-            Task::perform(map_connect(conn), Message::ConnectResult)
+            let mgr = state.ftp_manager.clone();
+            Task::perform(map_connect(mgr, conn), Message::ConnectResult)
         }
 
         Message::ConnectResult(outcome) => {
@@ -241,8 +254,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     let Some(conn) = state.connection_cloned(id) else {
                         return Task::none();
                     };
+                    let mgr = state.ftp_manager.clone();
                     Task::perform(
-                        map_list_dir(conn, state.remote_path.clone()),
+                        map_list_dir(mgr, conn, state.remote_path.clone(), Some(id)),
                         Message::RemoteDirLoaded,
                     )
                 }
@@ -259,8 +273,16 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.remote_status = ConnectionStatus::Disconnected;
             state.remote_entries.clear();
             state.selected_remote = None;
-            Task::none()
+            let mgr = state.ftp_manager.clone();
+            Task::perform(
+                async move {
+                    mgr.disconnect_all().await;
+                },
+                |_| Message::Noop,
+            )
         }
+
+        Message::Noop => Task::none(),
 
         Message::LocalDirLoaded(Ok((path, entries))) => {
             state.local_path = path;
@@ -282,7 +304,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     state.remote_entries = entries;
                 }
                 Err(e) => {
-                    client::log_ftp_error("list_dir", &e.0);
+                    ftp::client::log_ftp_error("list_dir", &e.0);
                     let msg = e.to_string();
                     state.remote_status = ConnectionStatus::Error(msg.clone());
                     state.status_message = Some(msg);
@@ -306,7 +328,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             let new_path = join_remote_path(&state.remote_path, &entry.name);
 
-            Task::perform(map_list_dir(conn, new_path), Message::RemoteDirLoaded)
+            let mgr = state.ftp_manager.clone();
+            Task::perform(
+                map_list_dir(mgr, conn, new_path, Some(id)),
+                Message::RemoteDirLoaded,
+            )
         }
 
         Message::LocalEntryOpened(entry) => {
@@ -342,7 +368,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| String::from("/"));
 
-            Task::perform(map_list_dir(conn, parent), Message::RemoteDirLoaded)
+            let mgr = state.ftp_manager.clone();
+            Task::perform(
+                map_list_dir(mgr, conn, parent, Some(id)),
+                Message::RemoteDirLoaded,
+            )
         }
 
         Message::LocalRefresh => Task::perform(
@@ -359,8 +389,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
+            let mgr = state.ftp_manager.clone();
             Task::perform(
-                map_list_dir(conn, state.remote_path.clone()),
+                map_list_dir(mgr, conn, state.remote_path.clone(), Some(id)),
                 Message::RemoteDirLoaded,
             )
         }
@@ -409,8 +440,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             });
             state.transfer_bytes = 0;
 
+            let mgr = state.ftp_manager.clone();
             Task::perform(
-                map_upload(conn, local_path, state.remote_path.clone()),
+                map_upload(mgr, conn, local_path, state.remote_path.clone()),
                 Message::TransferFinished,
             )
         }
@@ -448,8 +480,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             });
             state.transfer_bytes = 0;
 
+            let mgr = state.ftp_manager.clone();
             Task::perform(
                 map_download(
+                    mgr,
                     conn,
                     state.remote_path.clone(),
                     entry.name.clone(),
@@ -484,9 +518,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                         return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
                     };
 
+                    let mgr = state.ftp_manager.clone();
                     Task::batch([
                         Task::perform(load_local_dir(local_path), Message::LocalDirLoaded),
-                        Task::perform(map_list_dir(conn, remote_path), Message::RemoteDirLoaded),
+                        Task::perform(
+                            map_list_dir(mgr, conn, remote_path, Some(id)),
+                            Message::RemoteDirLoaded,
+                        ),
                     ])
                 }
                 Err(e) => {
@@ -603,32 +641,46 @@ fn apply_ftp_log(state: &mut State, lines: &[String]) {
     }
 }
 
-async fn map_connect(conn: Connection) -> FtpTaskResult<()> {
-    let response = client::connect(conn).await;
+async fn map_connect(mgr: FtpSessionManager, conn: Connection) -> FtpTaskResult<()> {
+    let response = ftp::client::connect(&mgr, conn).await;
     FtpTaskResult::from_response(response.result, response.log)
 }
 
-async fn map_list_dir(conn: Connection, path: String) -> FtpTaskResult<(String, Vec<FtpEntry>)> {
-    let response = client::list_dir(conn, path).await;
+async fn map_list_dir(
+    mgr: FtpSessionManager,
+    conn: Connection,
+    path: String,
+    previous_selection: Option<uuid::Uuid>,
+) -> FtpTaskResult<(String, Vec<FtpEntry>)> {
+    if let Some(prev) = previous_selection
+        && prev != conn.id
+    {
+        mgr.disconnect(prev).await;
+    }
+    mgr.disconnect_all_except(conn.id).await;
+
+    let response = ftp::client::list_dir(&mgr, conn, path).await;
     FtpTaskResult::from_response(response.result, response.log)
 }
 
 async fn map_upload(
+    mgr: FtpSessionManager,
     conn: Connection,
     local_path: PathBuf,
     remote_path: String,
 ) -> FtpTaskResult<()> {
-    let response = client::upload(conn, local_path, remote_path).await;
+    let response = ftp::client::upload(&mgr, conn, local_path, remote_path).await;
     FtpTaskResult::from_response(response.result, response.log)
 }
 
 async fn map_download(
+    mgr: FtpSessionManager,
     conn: Connection,
     remote_path: String,
     filename: String,
     local_dir: PathBuf,
 ) -> FtpTaskResult<()> {
-    let response = client::download(conn, remote_path, filename, local_dir).await;
+    let response = ftp::client::download(&mgr, conn, remote_path, filename, local_dir).await;
     FtpTaskResult::from_response(response.result, response.log)
 }
 

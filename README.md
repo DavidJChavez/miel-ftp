@@ -63,8 +63,8 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Errores tipados (`AppError`, `AppErrorMsg`) | ✅ |
 | Capas desacopladas (`models` / `ftp` / `ui` / `config`) | ✅ |
 | Validación de conexiones (`Connection::try_new`) | ✅ |
-| Sesión FTP persistente (un stream por conexión) | ⬜ |
-| Timeouts y reintentos en operaciones de red | ⬜ |
+| Sesión FTP persistente (un stream por conexión) | ✅ |
+| Timeouts y reintentos en operaciones de red | ✅ |
 
 ### Conexiones y configuración
 

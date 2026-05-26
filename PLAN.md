@@ -38,13 +38,13 @@ Hoy `update` invoca funciones en `ftp::client` que hacen **connect + login + …
 
 | ID | Severidad | Hallazgo | Estado |
 |----|-----------|----------|--------|
-| A1 | Crítico | Reconectar en cada operación | Pendiente → actor `FtpSession` |
+| A1 | Crítico | Reconectar en cada operación | **Hecho** → `FtpSessionManager` |
 | A2 | Crítico | Upload/download cargan archivo entero en RAM | Pendiente → streaming |
 | A3 | Crítico | Sin progreso real (`TransferProgress` no emitido) | Pendiente → `Subscription` |
 | A4 | — | Sin FTPS (`into_secure()` nunca llamado) | Pendiente |
 | A5 | — | Sin SFTP (fuera de `suppaftp`) | Pendiente / decisión alcance |
 | A6 | — | Parser LIST custom frágil | **Hecho** → `suppaftp::list::File` |
-| A7 | — | Sin timeouts en operaciones de red | Pendiente |
+| A7 | — | Sin timeouts en operaciones de red | **Hecho** → `with_timeout` + reintentos |
 | A8 | — | Imports / warnings menores | **Hecho** |
 | A9 | — | Acoplamiento `crate::app` en ftp/ui | **Hecho** → `crate::models` |
 
@@ -143,12 +143,13 @@ Entregable independiente; **completada** salvo mejoras menores de UX.
 
 ### Fase 2 — Sesión real + cola de transferencias
 
-- [ ] Actor `FtpSession` por conexión (`mpsc` de comandos)
+- [x] Sesión persistente (`FtpSessionManager` en `src/ftp/manager.rs`)
+- [ ] Actor `FtpSession` con `mpsc` (mejora futura si hace falta cancelación)
 - [ ] Upload/download por streaming (sin OOM)
 - [ ] `Subscription` → `Message::TransferProgress` con barra real
 - [ ] `TransferQueue` (pendiente / activa / hecha / fallida)
 - [ ] Cancelar y reintentar transferencias
-- [ ] Timeouts y reintentos automáticos en red
+- [x] Timeouts y reintentos automáticos en red
 
 ### Fase 3 — Paridad FileZilla (UX)
 

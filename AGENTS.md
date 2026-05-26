@@ -38,6 +38,8 @@ error.rs         → AppError, AppErrorMsg (Arc para Clone en Message)
 
 **Flujo iced:** `Message` → `update(&mut State)` → `Task<Message>` → `view(&State)`.
 
+**FTP:** `State.ftp_manager` (`FtpSessionManager`) mantiene un stream por sitio; ver `src/ftp/manager.rs`.
+
 **Regla de imports:** `ui/` y `ftp/` importan desde `crate::models::*`, **nunca** desde `crate::app`.
 
 ## Estado actual vs objetivo
@@ -49,7 +51,7 @@ error.rs         → AppError, AppErrorMsg (Arc para Clone en Message)
 | Log FTP **opcional** (toggle) | Progreso real (`Subscription`) |
 | `AppError` tipado | FTPS, drag & drop, multi-select |
 
-Deuda crítica conocida: **cada operación FTP reconecta**; **upload/download cargan el archivo entero en RAM**. No empeores esto; la Fase 2 debe atacarlo.
+Deuda conocida: **upload/download cargan el archivo entero en RAM**. Fase 2: streaming, cola y progreso real.
 
 ## Convenciones de código
 

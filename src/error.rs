@@ -43,4 +43,7 @@ pub enum AppError {
 
     #[error("Keyring error: {0}")]
     Keyring(String),
+
+    #[error("Operation timed out after {0}s")]
+    Timeout(u64),
 }

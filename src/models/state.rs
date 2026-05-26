@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use crate::ftp::FtpSessionManager;
 use crate::models::{
     connection::{Connection, ConnectionStatus},
     connection_form::ConnectionForm,
@@ -36,6 +37,9 @@ pub struct State {
 
     // FTP log (oculto por defecto)
     pub ftp_log: FtpLog,
+
+    /// Sesiones FTP persistentes (un stream por `connection.id`).
+    pub ftp_manager: FtpSessionManager,
 }
 
 impl State {

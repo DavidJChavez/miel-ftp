@@ -49,4 +49,7 @@ pub enum Message {
     // FTP log
     ToggleFtpLog,
     ClearFtpLog,
+
+    /// Completado de tarea en segundo plano sin efecto en el estado.
+    Noop,
 }

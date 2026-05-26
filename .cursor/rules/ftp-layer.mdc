@@ -29,12 +29,18 @@ Usar `FtpEntry::from_list_line` (`suppaftp::list::File`). No parsear LIST a mano
 ftp.login(conn.username.as_str(), conn.password()).await?;
 ```
 
+## Sesión persistente
+
+- Usar `FtpSessionManager` en `State` (`state.ftp_manager`).
+- Un `AsyncFtpStream` por `connection.id`; log `> sesión reutilizada` en operaciones subsecuentes.
+- `disconnect` / `disconnect_all_except` al cambiar de sitio o desconectar.
+
 ## Pendiente (no implementar a medias)
 
-- Sesión persistente: actor `FtpSession` + `mpsc` (Fase 2).
 - Streaming upload/download (no `read_to_end` / `read` entero del archivo).
 - FTPS: `into_secure()` cuando se pida explícitamente.
 
-## Timeouts
+## Timeouts y reintentos
 
-Aún no hay; al añadirlos usar `tokio::time::timeout` en operaciones de red.
+- Constantes en `ftp/config.rs` (`CONNECT_TIMEOUT`, `OPERATION_TIMEOUT`, `MAX_RETRIES`).
+- `with_timeout` y macro `ftp_retry!` en `manager.rs`; invalidar sesión antes de reintentar.
