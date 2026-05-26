@@ -2,6 +2,7 @@ pub mod connection_modal;
 pub mod context_menu;
 pub mod file_panel;
 pub mod ftp_log_panel;
+pub mod icons;
 pub mod prompt_modal;
 pub mod sidebar;
 pub mod status_bar;

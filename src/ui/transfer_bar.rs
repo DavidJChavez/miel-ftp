@@ -5,7 +5,8 @@ use iced::{
 
 use crate::models::{message::Message, transfer::TransferEntry};
 use crate::ui::ftp_log_panel::ftp_log_toggle_btn;
-use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER_SUBTLE, DANGER, TEXT_DIM, TEXT_MUTED};
+use crate::ui::icons;
+use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER_SUBTLE, TEXT_DIM, TEXT_MUTED};
 
 pub fn transfer_bar(
     active: Option<&TransferEntry>,
@@ -18,10 +19,6 @@ pub fn transfer_bar(
             .align_y(Alignment::Center),
 
         Some(t) => {
-            let icon = match t.kind {
-                crate::models::transfer::TransferKind::Upload => "↑",
-                crate::models::transfer::TransferKind::Download => "↓",
-            };
             let action = match t.kind {
                 crate::models::transfer::TransferKind::Upload => "subiendo",
                 crate::models::transfer::TransferKind::Download => "bajando",
@@ -50,12 +47,12 @@ pub fn transfer_bar(
             };
 
             let mut row_items = vec![
-                text(icon).size(14).color(ACCENT).into(),
+                icons::transfer_kind(t.kind, 14),
                 column_pair(progress_text, bar),
             ];
 
             row_items.push(
-                button(text("✕").size(11).color(DANGER))
+                button(icons::close(11))
                     .on_press(Message::CancelTransfer(t.id))
                     .padding([2, 6])
                     .style(|_, _| button::Style {

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use uuid::Uuid;
 
 use crate::error::AppErrorMsg;
@@ -92,6 +94,7 @@ pub enum Message {
     },
     CancelTransfer(Uuid),
     RetryTransfer(Uuid),
+    ResumeTransfer(Uuid),
     ClearCompletedTransfers,
     ToggleTransferQueue,
 
@@ -103,6 +106,11 @@ pub enum Message {
     // FTP log
     ToggleFtpLog,
     ClearFtpLog,
+
+    // Drag & drop
+    FileDropped(PathBuf),
+    FilesHoverEntered,
+    FilesHoverLeft,
 
     /// Completado de tarea en segundo plano sin efecto en el estado.
     Noop,

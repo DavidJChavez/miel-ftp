@@ -9,7 +9,7 @@ repository = "https://github.com/david/miel-ftp"
 categories = ["filesystem"]
 
 [dependencies]
-iced = { version = "0.14", features = ["tokio"] }
+iced = { version = "0.14", features = ["tokio", "svg"] }
 tokio = { version = "1", features = ["full"] }
 suppaftp = { version = "6", features = ["async-native-tls"] }
 serde = { version = "1", features = ["derive"] }

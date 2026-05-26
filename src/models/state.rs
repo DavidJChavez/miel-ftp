@@ -46,6 +46,7 @@ pub struct State {
     pub prompt: Option<PromptDialog>,
     pub focused_panel: PanelKind,
     pub modifiers: Modifiers,
+    pub drop_hover: bool,
 
     // Transfer queue
     pub transfers: Vec<TransferEntry>,

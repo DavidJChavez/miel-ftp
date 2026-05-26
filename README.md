@@ -95,7 +95,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Selección múltiple | ✅ |
 | Menú contextual (rename, delete, mkdir, …) | ✅ |
 | Atajos de teclado | ✅ |
-| Drag & drop | ⬜ |
+| Drag & drop | ✅ |
 | Mkdir / rename / delete (local y remoto) | ✅ |
 | Comparar / sincronizar directorios | ⬜ |
 
@@ -111,7 +111,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Cola de transferencias (pendiente / activa / historial) | ✅ |
 | Transferencias concurrentes | ⬜ |
 | Cancelar / reintentar | ✅ |
-| Resume interrumpido (`REST`) | ⬜ |
+| Resume interrumpido (`REST`) | ✅ |
 | Throttling de ancho de banda | ⬜ |
 | Edición remota (temp + re-subida) | ⬜ |
 
@@ -126,7 +126,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Log FTP siempre oculto por defecto; toggle mostrar/ocultar | ✅ |
 | Status bar (conteo archivos, tamaño total) | ✅ |
 | Toasts / notificaciones | ⬜ |
-| Iconos por tipo de archivo (SVG) | ⬜ |
+| Iconos por tipo de archivo (SVG) | ✅ |
 | Animaciones / skeleton loading | ⬜ |
 
 ### Calidad y proyecto
@@ -145,7 +145,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 |------|-------------|--------|
 | **1** | Bases sólidas, Site Manager, deuda técnica, log FTP opcional | ✅ |
 | **2** | Sesión persistente, streaming, cola y progreso real | ✅ |
-| **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | 🟡 |
+| **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | ✅ |
 | **4** | FTPS/SFTP, sync, edición remota, throttling | ⬜ |
 
 ## Licencia

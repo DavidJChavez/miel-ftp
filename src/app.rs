@@ -67,6 +67,7 @@ pub fn boot() -> (State, Task<Message>) {
         prompt: None,
         focused_panel: PanelKind::Local,
         modifiers: Modifiers::default(),
+        drop_hover: false,
         transfers: vec![],
         queue_panel_visible: false,
         status_message: None,
@@ -695,6 +696,36 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 remote_path: entry.remote_path,
                 total_bytes: entry.total_bytes,
                 transferred_bytes: 0,
+                resume_from: 0,
+                status: TransferStatus::Queued,
+                cancel: Arc::new(AtomicBool::new(false)),
+            });
+
+            start_next_transfer_if_idle(state)
+        }
+
+        Message::ResumeTransfer(id) => {
+            let Some(entry) = state
+                .transfers
+                .iter()
+                .find(|t| t.id == id && t.status.is_terminal() && t.transferred_bytes > 0)
+                .cloned()
+            else {
+                return Task::none();
+            };
+
+            let resume_from = entry.transferred_bytes;
+
+            state.transfers.push(TransferEntry {
+                id: Uuid::new_v4(),
+                connection_id: entry.connection_id,
+                kind: entry.kind,
+                filename: entry.filename,
+                local_path: entry.local_path,
+                remote_path: entry.remote_path,
+                total_bytes: entry.total_bytes,
+                transferred_bytes: resume_from,
+                resume_from,
                 status: TransferStatus::Queued,
                 cancel: Arc::new(AtomicBool::new(false)),
             });
@@ -720,6 +751,21 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ClearFtpLog => {
             state.ftp_log.clear();
             Task::none()
+        }
+
+        Message::FilesHoverEntered => {
+            state.drop_hover = true;
+            Task::none()
+        }
+
+        Message::FilesHoverLeft => {
+            state.drop_hover = false;
+            Task::none()
+        }
+
+        Message::FileDropped(path) => {
+            state.drop_hover = false;
+            enqueue_dropped_path(state, path)
         }
     }
 }
@@ -760,6 +806,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             &state.selected_local,
             state.sort_local,
             &state.filter_local,
+            false,
         ),
         divider(crate::ui::theme::BORDER_SUBTLE),
         file_panel(
@@ -770,6 +817,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             &state.selected_remote,
             state.sort_remote,
             &state.filter_remote,
+            state.drop_hover,
         ),
     ]
     .height(Length::Fill);
@@ -837,6 +885,7 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
     Subscription::batch([
         event::listen_with(keyboard_event),
         event::listen_with(modifiers_event),
+        event::listen_with(window_event),
     ])
 }
 
@@ -865,6 +914,23 @@ fn modifiers_event(
     } else {
         None
     }
+}
+
+fn window_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: iced::window::Id,
+) -> Option<Message> {
+    use iced::window::Event::{FileDropped, FileHovered, FilesHoveredLeft};
+    if let iced::Event::Window(e) = event {
+        return match e {
+            FileHovered(_) => Some(Message::FilesHoverEntered),
+            FilesHoveredLeft => Some(Message::FilesHoverLeft),
+            FileDropped(path) => Some(Message::FileDropped(path)),
+            _ => None,
+        };
+    }
+    None
 }
 
 fn handle_keypress(state: &mut State, key: Key, modifiers: Modifiers) -> Task<Message> {
@@ -1217,9 +1283,87 @@ fn enqueue_uploads(state: &mut State) -> Task<Message> {
             remote_path: state.remote_path.clone(),
             total_bytes,
             transferred_bytes: 0,
+            resume_from: 0,
             status: TransferStatus::Queued,
             cancel: Arc::new(AtomicBool::new(false)),
         });
+    }
+
+    start_next_transfer_if_idle(state)
+}
+
+fn enqueue_dropped_path(state: &mut State, path: PathBuf) -> Task<Message> {
+    let Some(connection_id) = state.selected_connection else {
+        state.status_message = Some("Conéctate antes de soltar archivos".into());
+        return Task::none();
+    };
+
+    if !matches!(state.remote_status, ConnectionStatus::Connected) {
+        state.status_message = Some("Conéctate antes de soltar archivos".into());
+        return Task::none();
+    }
+
+    let mut enqueued = 0usize;
+    let mut skipped_dirs = false;
+
+    let paths_to_upload: Vec<PathBuf> = if path.is_dir() {
+        match std::fs::read_dir(&path) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let p = e.path();
+                    if p.is_dir() {
+                        skipped_dirs = true;
+                        None
+                    } else {
+                        Some(p)
+                    }
+                })
+                .collect(),
+            Err(e) => {
+                state.status_message = Some(e.to_string());
+                return Task::none();
+            }
+        }
+    } else {
+        vec![path]
+    };
+
+    for local_path in paths_to_upload {
+        let Some(filename) = local_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let total_bytes = std::fs::metadata(&local_path).ok().map(|m| m.len());
+
+        state.transfers.push(TransferEntry {
+            id: Uuid::new_v4(),
+            connection_id,
+            kind: TransferKind::Upload,
+            filename: filename.to_string(),
+            local_path,
+            remote_path: state.remote_path.clone(),
+            total_bytes,
+            transferred_bytes: 0,
+            resume_from: 0,
+            status: TransferStatus::Queued,
+            cancel: Arc::new(AtomicBool::new(false)),
+        });
+        enqueued += 1;
+    }
+
+    if enqueued == 0 {
+        state.status_message = Some(if skipped_dirs {
+            "Solo se suben archivos sueltos; las carpetas anidadas se ignoran".into()
+        } else {
+            "No hay archivos para subir".into()
+        });
+        return Task::none();
+    }
+
+    if skipped_dirs {
+        state.status_message =
+            Some("Carpetas anidadas ignoradas; solo archivos del nivel superior".into());
     }
 
     start_next_transfer_if_idle(state)
@@ -1261,6 +1405,7 @@ fn enqueue_downloads(state: &mut State) -> Task<Message> {
             remote_path: state.remote_path.clone(),
             total_bytes,
             transferred_bytes: 0,
+            resume_from: 0,
             status: TransferStatus::Queued,
             cancel: Arc::new(AtomicBool::new(false)),
         });
@@ -1312,6 +1457,7 @@ fn transfer_stream(
                         conn,
                         entry.local_path,
                         entry.remote_path,
+                        entry.resume_from,
                         entry.cancel.clone(),
                         progress_tx,
                     )
@@ -1328,6 +1474,7 @@ fn transfer_stream(
                         entry.remote_path,
                         entry.filename,
                         local_dir,
+                        entry.resume_from,
                         entry.cancel.clone(),
                         progress_tx,
                     )

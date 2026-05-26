@@ -42,6 +42,7 @@ pub struct TransferEntry {
     pub remote_path: String,
     pub total_bytes: Option<u64>,
     pub transferred_bytes: u64,
+    pub resume_from: u64,
     pub status: TransferStatus,
     pub cancel: Arc<AtomicBool>,
 }
@@ -81,6 +82,7 @@ mod tests {
             remote_path: "/".into(),
             total_bytes: total,
             transferred_bytes: transferred,
+            resume_from: 0,
             status: TransferStatus::Active,
             cancel: Arc::new(AtomicBool::new(false)),
         }

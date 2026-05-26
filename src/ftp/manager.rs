@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{AsyncReadExt, AsyncWriteExt};
 use suppaftp::AsyncFtpStream;
-use tokio::io::{AsyncReadExt as TokioAsyncReadExt, AsyncWriteExt as TokioAsyncWriteExt};
+use tokio::io::{
+    AsyncReadExt as TokioAsyncReadExt, AsyncSeekExt, AsyncWriteExt as TokioAsyncWriteExt,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -149,6 +151,7 @@ impl FtpSessionManager {
         conn: Connection,
         local_path: PathBuf,
         remote_path: String,
+        resume_from: u64,
         cancel: Arc<AtomicBool>,
         progress: UnboundedSender<u64>,
     ) -> FtpResponse<()> {
@@ -159,6 +162,7 @@ impl FtpSessionManager {
                 &conn.id,
                 &local_path,
                 remote_path.as_str(),
+                resume_from,
                 &cancel,
                 &progress,
                 &mut log,
@@ -176,12 +180,14 @@ impl FtpSessionManager {
         FtpResponse { result, log }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_stream(
         &self,
         conn: Connection,
         remote_path: String,
         filename: String,
         local_dir: PathBuf,
+        resume_from: u64,
         cancel: Arc<AtomicBool>,
         progress: UnboundedSender<u64>,
     ) -> FtpResponse<()> {
@@ -193,6 +199,7 @@ impl FtpSessionManager {
                 remote_path.as_str(),
                 filename.as_str(),
                 local_dir.as_path(),
+                resume_from,
                 &cancel,
                 &progress,
                 &mut log,
@@ -454,11 +461,13 @@ impl FtpSessionManager {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn exec_upload_stream(
         &self,
         id: &Uuid,
         local_path: &std::path::Path,
         remote_path: &str,
+        resume_from: u64,
         cancel: &Arc<AtomicBool>,
         progress: &UnboundedSender<u64>,
         log: &mut Vec<String>,
@@ -470,7 +479,17 @@ impl FtpSessionManager {
             .to_string();
 
         let mut file = tokio::fs::File::open(local_path).await?;
-        let mut transferred: u64 = 0;
+        if resume_from > 0 {
+            file.seek(std::io::SeekFrom::Start(resume_from))
+                .await
+                .map_err(AppError::from)?;
+        }
+
+        let mut transferred: u64 = resume_from;
+        if resume_from > 0 {
+            let _ = progress.unbounded_send(transferred);
+        }
+
         let mut buf = vec![0u8; CHUNK_SIZE];
 
         let mut data_stream = {
@@ -487,15 +506,37 @@ impl FtpSessionManager {
             })
             .await?;
 
-            log.push(cmd(format!("STOR {filename}")));
-            with_timeout(OPERATION_TIMEOUT, async {
-                session
-                    .stream
-                    .put_with_stream(&filename)
-                    .await
-                    .map_err(AppError::from)
-            })
-            .await?
+            if resume_from > 0 {
+                log.push(cmd(format!("REST {resume_from}")));
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .resume_transfer(resume_from as usize)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?;
+
+                log.push(cmd(format!("APPE {filename}")));
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .append_with_stream(&filename)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?
+            } else {
+                log.push(cmd(format!("STOR {filename}")));
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .put_with_stream(&filename)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?
+            }
         };
 
         let transfer_result = async {
@@ -553,13 +594,27 @@ impl FtpSessionManager {
         remote_path: &str,
         filename: &str,
         local_dir: &std::path::Path,
+        resume_from: u64,
         cancel: &Arc<AtomicBool>,
         progress: &UnboundedSender<u64>,
         log: &mut Vec<String>,
     ) -> AppResult<()> {
         let dest = local_dir.join(filename);
-        let mut file = tokio::fs::File::create(&dest).await?;
-        let mut transferred: u64 = 0;
+        let mut file = if resume_from > 0 {
+            tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&dest)
+                .await?
+        } else {
+            tokio::fs::File::create(&dest).await?
+        };
+
+        let mut transferred: u64 = resume_from;
+        if resume_from > 0 {
+            let _ = progress.unbounded_send(transferred);
+        }
+
         let mut buf = vec![0u8; CHUNK_SIZE];
 
         let mut data_stream = {
@@ -575,6 +630,18 @@ impl FtpSessionManager {
                     .map_err(AppError::from)
             })
             .await?;
+
+            if resume_from > 0 {
+                log.push(cmd(format!("REST {resume_from}")));
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .resume_transfer(resume_from as usize)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?;
+            }
 
             log.push(cmd(format!("RETR {filename}")));
             with_timeout(OPERATION_TIMEOUT, async {

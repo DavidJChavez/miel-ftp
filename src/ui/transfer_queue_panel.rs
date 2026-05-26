@@ -5,8 +5,9 @@ use iced::{
 
 use crate::models::{
     message::Message,
-    transfer::{TransferEntry, TransferKind, TransferStatus},
+    transfer::{TransferEntry, TransferStatus},
 };
+use crate::ui::icons;
 use crate::ui::theme::{ACCENT, BG_BASE, BORDER_SUBTLE, DANGER, SUCCESS, TEXT_DIM, TEXT_MUTED};
 use crate::ui::transfer_bar::format_bytes;
 
@@ -61,10 +62,7 @@ pub fn transfer_queue_panel(transfers: &[TransferEntry]) -> Element<'_, Message>
 }
 
 fn transfer_row(entry: &TransferEntry) -> Element<'_, Message> {
-    let icon = match entry.kind {
-        TransferKind::Upload => "↑",
-        TransferKind::Download => "↓",
-    };
+    let icon = icons::transfer_kind(entry.kind, 12);
 
     let progress = match (entry.percent(), entry.total_bytes) {
         (Some(p), _) => format!("{p:.0}%"),
@@ -103,6 +101,17 @@ fn transfer_row(entry: &TransferEntry) -> Element<'_, Message> {
             );
         }
         TransferStatus::Failed(_) | TransferStatus::Cancelled => {
+            if entry.transferred_bytes > 0 {
+                actions = actions.push(
+                    button(text("reanudar").size(10).color(SUCCESS))
+                        .on_press(Message::ResumeTransfer(entry.id))
+                        .style(|_, _| button::Style {
+                            background: None,
+                            ..button::Style::default()
+                        })
+                        .padding([1, 4]),
+                );
+            }
             actions = actions.push(
                 button(text("reintentar").size(10).color(ACCENT))
                     .on_press(Message::RetryTransfer(entry.id))
@@ -117,7 +126,7 @@ fn transfer_row(entry: &TransferEntry) -> Element<'_, Message> {
     }
 
     row![
-        text(icon).size(12).color(ACCENT).width(16),
+        container(icon).width(16),
         column![
             text(&entry.filename).size(11).color(TEXT_MUTED),
             text(format!("{status_text} — {progress}"))

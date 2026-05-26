@@ -12,11 +12,13 @@ use crate::models::{
     panel::PanelKind,
     sort::{SortKey, SortSpec, apply_view},
 };
+use crate::ui::icons;
 use crate::ui::theme::{
     ACCENT, BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER_SUBTLE, SUCCESS, TEXT_DIM, TEXT_MUTED,
     TEXT_PRIMARY,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn file_panel<'a>(
     kind: PanelKind,
     path: &'a str,
@@ -25,11 +27,12 @@ pub fn file_panel<'a>(
     selected: &'a HashSet<String>,
     sort: SortSpec,
     filter: &'a str,
+    drop_hover: bool,
 ) -> Element<'a, Message> {
-    let (icon, label, label_color) = match kind {
-        PanelKind::Local => ("💻", "local", TEXT_MUTED),
+    let (panel_icon, label, label_color) = match kind {
+        PanelKind::Local => (icons::computer(14), "local", TEXT_MUTED),
         PanelKind::Remote => (
-            "🖥",
+            icons::server(14, is_connected),
             "remoto",
             if is_connected { SUCCESS } else { TEXT_MUTED },
         ),
@@ -44,7 +47,7 @@ pub fn file_panel<'a>(
 
     let header = container(
         row![
-            text(icon).size(14),
+            panel_icon,
             text(label).size(12).color(label_color),
             iced::widget::Space::new().width(Length::Fill),
             action_btn("+ carpeta", Message::MkdirPressed(kind), ops_enabled),
@@ -58,16 +61,16 @@ pub fn file_panel<'a>(
                 Message::DeletePressed(kind),
                 ops_enabled && has_selection,
             ),
-            action_btn(
-                "↑",
+            action_icon(
+                icons::nav_up(12),
                 match kind {
                     PanelKind::Local => Message::LocalGoUp,
                     PanelKind::Remote => Message::RemoteGoUp,
                 },
                 true,
             ),
-            action_btn(
-                "↺",
+            action_icon(
+                icons::refresh(12),
                 match kind {
                     PanelKind::Local => Message::LocalRefresh,
                     PanelKind::Remote => Message::RemoteRefresh,
@@ -77,10 +80,10 @@ pub fn file_panel<'a>(
                     PanelKind::Remote => is_connected,
                 },
             ),
-            action_btn(
+            action_transfer_btn(
                 match kind {
-                    PanelKind::Local => "↑ subir",
-                    PanelKind::Remote => "↓ bajar",
+                    PanelKind::Local => (icons::arrow_up(12, TEXT_MUTED), "subir"),
+                    PanelKind::Remote => (icons::arrow_down(12, TEXT_MUTED), "bajar"),
                 },
                 match kind {
                     PanelKind::Local => Message::UploadPressed,
@@ -183,13 +186,44 @@ pub fn file_panel<'a>(
 
     let list = scrollable(column(file_rows)).height(Length::Fill);
 
-    mouse_area(
-        container(column![header, breadcrumbs, col_headers, list,])
+    let panel_content = column![header, breadcrumbs, col_headers, list,]
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let show_drop_overlay = matches!(kind, PanelKind::Remote) && drop_hover && is_connected;
+
+    let panel = if show_drop_overlay {
+        iced::widget::stack![
+            panel_content,
+            container(
+                text(format!("Suelta para subir a {path}"))
+                    .size(12)
+                    .color(ACCENT)
+            )
             .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(Message::PanelFocused(kind))
-    .into()
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Background::Color(iced::Color {
+                    a: 0.85,
+                    ..BG_SURFACE
+                })),
+                border: Border {
+                    color: ACCENT,
+                    width: 2.0,
+                    radius: 0.0.into(),
+                },
+                ..container::Style::default()
+            }),
+        ]
+    } else {
+        iced::widget::stack![panel_content]
+    };
+
+    mouse_area(container(panel).width(Length::Fill).height(Length::Fill))
+        .on_press(Message::PanelFocused(kind))
+        .into()
 }
 
 fn breadcrumbs_row(kind: PanelKind, path: &str) -> Element<'static, Message> {
@@ -198,7 +232,7 @@ fn breadcrumbs_row(kind: PanelKind, path: &str) -> Element<'static, Message> {
     let mut items: Vec<Element<Message>> = Vec::new();
     for (i, (label, full_path)) in segments.into_iter().enumerate() {
         if i > 0 {
-            items.push(text("›").size(10).color(TEXT_DIM).into());
+            items.push(icons::chevron_right(10));
         }
         let msg = match kind {
             PanelKind::Local => Message::LocalCrumbClicked(full_path),
@@ -283,25 +317,29 @@ fn sort_header(
     width: Length,
 ) -> Element<'static, Message> {
     let active = sort.key == key;
-    let arrow = if active {
-        match sort.order {
-            crate::models::sort::SortOrder::Asc => " ▴",
-            crate::models::sort::SortOrder::Desc => " ▾",
-        }
-    } else {
-        ""
-    };
 
     let msg = match kind {
         PanelKind::Local => Message::LocalSortBy(key),
         PanelKind::Remote => Message::RemoteSortBy(key),
     };
 
-    let label_text = format!("{label}{arrow}");
-    let accent = active;
+    let label_color = if active { ACCENT } else { TEXT_DIM };
+    let label_owned = label.to_string();
+
+    let mut header_row = row![text(label_owned).size(10).color(label_color),]
+        .spacing(4)
+        .align_y(Alignment::Center);
+
+    if active {
+        let arrow = match sort.order {
+            crate::models::sort::SortOrder::Asc => icons::arrow_up(13, ACCENT),
+            crate::models::sort::SortOrder::Desc => icons::arrow_down(13, ACCENT),
+        };
+        header_row = header_row.push(arrow);
+    }
 
     container(
-        button(text(label_text).size(10).color(TEXT_DIM))
+        button(header_row)
             .on_press(msg)
             .padding([2, 0])
             .style(move |_, status| button::Style {
@@ -310,7 +348,7 @@ fn sort_header(
                     _ => iced::Color::TRANSPARENT,
                 })),
                 border: Border::default(),
-                text_color: if accent { ACCENT } else { TEXT_DIM },
+                text_color: label_color,
                 ..button::Style::default()
             }),
     )
@@ -351,7 +389,11 @@ fn file_row<'a>(
         iced::Color::TRANSPARENT
     };
 
-    let icon = if entry.is_dir { "📁" } else { "📄" };
+    let icon = if entry.is_dir {
+        icons::folder(13)
+    } else {
+        icons::file(13)
+    };
 
     let size_str = match entry.size {
         Some(s) if s >= 1_048_576 => format!("{:.1} MB", s as f64 / 1_048_576.0),
@@ -365,7 +407,7 @@ fn file_row<'a>(
 
     let row_btn = button(
         row![
-            text(icon).size(13).width(20),
+            container(icon).width(20),
             text(&entry.name)
                 .size(12)
                 .color(TEXT_PRIMARY)
@@ -417,6 +459,67 @@ fn action_btn(label: &'static str, msg: Message, enabled: bool) -> Element<'stat
         ..button::Style::default()
     })
     .padding([3, 6]);
+
+    if enabled {
+        btn.on_press(msg).into()
+    } else {
+        btn.into()
+    }
+}
+
+fn action_icon(
+    icon: Element<'static, Message>,
+    msg: Message,
+    enabled: bool,
+) -> Element<'static, Message> {
+    let btn = button(icon)
+        .style(move |_, status| button::Style {
+            background: Some(iced::Background::Color(match status {
+                button::Status::Hovered if enabled => BG_HOVER,
+                _ => iced::Color::TRANSPARENT,
+            })),
+            border: Border {
+                radius: 5.0.into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        })
+        .padding([3, 6]);
+
+    if enabled {
+        btn.on_press(msg).into()
+    } else {
+        btn.into()
+    }
+}
+
+fn action_transfer_btn(
+    (icon, label): (Element<'static, Message>, &'static str),
+    msg: Message,
+    enabled: bool,
+) -> Element<'static, Message> {
+    let content = row![
+        icon,
+        text(label)
+            .size(11)
+            .color(if enabled { TEXT_MUTED } else { TEXT_DIM }),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+
+    let btn = button(content)
+        .style(move |_, status| button::Style {
+            background: Some(iced::Background::Color(match status {
+                button::Status::Hovered if enabled => BG_HOVER,
+                _ => iced::Color::TRANSPARENT,
+            })),
+            border: Border {
+                radius: 5.0.into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        })
+        .padding([3, 6]);
 
     if enabled {
         btn.on_press(msg).into()
