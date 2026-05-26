@@ -34,7 +34,8 @@ pub fn is_retryable(err: &AppError) -> bool {
         | AppError::Config(_)
         | AppError::Keyring(_)
         | AppError::Json(_)
-        | AppError::NoConnection => false,
+        | AppError::NoConnection
+        | AppError::Cancelled => false,
     }
 }
 
@@ -50,5 +51,10 @@ mod tests {
     #[test]
     fn timeout_errors_are_retryable() {
         assert!(is_retryable(&AppError::Timeout(30)));
+    }
+
+    #[test]
+    fn cancelled_errors_are_not_retryable() {
+        assert!(!is_retryable(&AppError::Cancelled));
     }
 }

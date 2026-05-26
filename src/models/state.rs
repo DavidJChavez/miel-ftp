@@ -6,7 +6,7 @@ use crate::models::{
     connection_form::ConnectionForm,
     ftp_entry::FtpEntry,
     ftp_log::FtpLog,
-    transfer::Transfer,
+    transfer::{TransferEntry, TransferStatus},
 };
 
 pub struct State {
@@ -28,9 +28,9 @@ pub struct State {
     pub local_entries: Vec<FtpEntry>,
     pub selected_local: Option<String>,
 
-    // Active transfer
-    pub active_transfer: Option<Transfer>,
-    pub transfer_bytes: u64,
+    // Transfer queue
+    pub transfers: Vec<TransferEntry>,
+    pub queue_panel_visible: bool,
 
     // UI feedback
     pub status_message: Option<String>,
@@ -49,5 +49,20 @@ impl State {
 
     pub fn connection_cloned(&self, id: Uuid) -> Option<Connection> {
         self.connection(id).cloned()
+    }
+
+    pub fn active_transfer(&self) -> Option<&TransferEntry> {
+        self.transfers.iter().find(|t| t.status.is_active())
+    }
+
+    pub fn queued_count(&self) -> usize {
+        self.transfers
+            .iter()
+            .filter(|t| matches!(t.status, TransferStatus::Queued))
+            .count()
+    }
+
+    pub fn transfer_index(&self, id: Uuid) -> Option<usize> {
+        self.transfers.iter().position(|t| t.id == id)
     }
 }

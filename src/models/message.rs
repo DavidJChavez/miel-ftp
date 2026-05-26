@@ -35,9 +35,19 @@ pub enum Message {
     // Transfer
     UploadPressed,
     DownloadPressed,
-    #[allow(dead_code)]
-    TransferProgress(u64),
-    TransferFinished(FtpTaskResult<()>),
+    TransferProgress {
+        id: Uuid,
+        bytes: u64,
+        total: Option<u64>,
+    },
+    TransferFinished {
+        id: Uuid,
+        result: FtpTaskResult<()>,
+    },
+    CancelTransfer(Uuid),
+    RetryTransfer(Uuid),
+    ClearCompletedTransfers,
+    ToggleTransferQueue,
     LocalFileSelected(String),
     RemoteFileSelected(String),
 

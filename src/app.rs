@@ -1,4 +1,12 @@
 use std::path::PathBuf;
+use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use futures::{SinkExt, StreamExt};
+use iced::futures::channel::mpsc;
+use iced::stream;
+use uuid::Uuid;
 
 use crate::config::{load_connections, save_connections};
 use crate::error::{AppError, AppErrorMsg};
@@ -11,8 +19,9 @@ use crate::models::{
     ftp_task::FtpTaskResult,
     message::Message,
     state::State,
-    transfer::Transfer,
+    transfer::{TransferEntry, TransferKind, TransferStatus},
 };
+use iced::futures::Stream;
 use iced::{Element, Length, Task, Theme};
 use secrecy::SecretString;
 use tracing::{error, warn};
@@ -41,8 +50,8 @@ pub fn boot() -> (State, Task<Message>) {
         local_path: home.clone(),
         local_entries: vec![],
         selected_local: None,
-        active_transfer: None,
-        transfer_bytes: 0,
+        transfers: vec![],
+        queue_panel_visible: false,
         status_message: None,
         ftp_log: FtpLog::default(),
         ftp_manager: FtpSessionManager::new(),
@@ -424,27 +433,27 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            let Some(id) = state.selected_connection else {
-                return Task::none();
-            };
-
-            let Some(conn) = state.connection_cloned(id) else {
+            let Some(connection_id) = state.selected_connection else {
                 return Task::none();
             };
 
             let local_path = PathBuf::from(&state.local_path).join(&entry.name);
+            let total_bytes = std::fs::metadata(&local_path).ok().map(|m| m.len());
 
-            state.active_transfer = Some(Transfer {
-                filename: entry.name.clone(),
-                is_upload: true,
+            state.transfers.push(TransferEntry {
+                id: Uuid::new_v4(),
+                connection_id,
+                kind: TransferKind::Upload,
+                filename: entry.name,
+                local_path,
+                remote_path: state.remote_path.clone(),
+                total_bytes,
+                transferred_bytes: 0,
+                status: TransferStatus::Queued,
+                cancel: Arc::new(AtomicBool::new(false)),
             });
-            state.transfer_bytes = 0;
 
-            let mgr = state.ftp_manager.clone();
-            Task::perform(
-                map_upload(mgr, conn, local_path, state.remote_path.clone()),
-                Message::TransferFinished,
-            )
+            start_next_transfer_if_idle(state)
         }
 
         Message::DownloadPressed => {
@@ -464,75 +473,127 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            let Some(id) = state.selected_connection else {
-                return Task::none();
-            };
-
-            let Some(conn) = state.connection_cloned(id) else {
+            let Some(connection_id) = state.selected_connection else {
                 return Task::none();
             };
 
             let local_dir = PathBuf::from(&state.local_path);
+            let total_bytes = entry.size;
 
-            state.active_transfer = Some(Transfer {
-                filename: entry.name.clone(),
-                is_upload: false,
+            let name = entry.name.clone();
+            state.transfers.push(TransferEntry {
+                id: Uuid::new_v4(),
+                connection_id,
+                kind: TransferKind::Download,
+                filename: name.clone(),
+                local_path: local_dir.join(&name),
+                remote_path: state.remote_path.clone(),
+                total_bytes,
+                transferred_bytes: 0,
+                status: TransferStatus::Queued,
+                cancel: Arc::new(AtomicBool::new(false)),
             });
-            state.transfer_bytes = 0;
 
-            let mgr = state.ftp_manager.clone();
-            Task::perform(
-                map_download(
-                    mgr,
-                    conn,
-                    state.remote_path.clone(),
-                    entry.name.clone(),
-                    local_dir,
-                ),
-                Message::TransferFinished,
-            )
+            start_next_transfer_if_idle(state)
         }
 
-        Message::TransferProgress(bytes) => {
-            state.transfer_bytes = bytes;
+        Message::TransferProgress { id, bytes, total } => {
+            if let Some(idx) = state.transfer_index(id) {
+                state.transfers[idx].transferred_bytes = bytes;
+                if state.transfers[idx].total_bytes.is_none() {
+                    state.transfers[idx].total_bytes = total;
+                }
+            }
             Task::none()
         }
 
-        Message::TransferFinished(outcome) => {
-            apply_ftp_log(state, &outcome.log);
-            state.active_transfer = None;
-            state.transfer_bytes = 0;
+        Message::TransferFinished { id, result } => {
+            apply_ftp_log(state, &result.log);
 
-            match outcome.result {
-                Ok(()) => {
-                    state.status_message = Some("Transferencia completada".into());
-
-                    let local_path = state.local_path.clone();
-                    let remote_path = state.remote_path.clone();
-
-                    let Some(id) = state.selected_connection else {
-                        return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
-                    };
-
-                    let Some(conn) = state.connection_cloned(id) else {
-                        return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
-                    };
-
-                    let mgr = state.ftp_manager.clone();
-                    Task::batch([
-                        Task::perform(load_local_dir(local_path), Message::LocalDirLoaded),
-                        Task::perform(
-                            map_list_dir(mgr, conn, remote_path, Some(id)),
-                            Message::RemoteDirLoaded,
-                        ),
-                    ])
-                }
-                Err(e) => {
-                    error!(error = %e, "transferencia fallida");
-                    state.status_message = Some(e.to_string());
-                    Task::none()
+            let mut success = false;
+            if let Some(idx) = state.transfer_index(id) {
+                match &result.result {
+                    Ok(()) => {
+                        state.transfers[idx].status = TransferStatus::Done;
+                        success = true;
+                    }
+                    Err(e) if matches!(*e.0, AppError::Cancelled) => {
+                        state.transfers[idx].status = TransferStatus::Cancelled;
+                        state.status_message = Some("Transferencia cancelada".into());
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        state.transfers[idx].status = TransferStatus::Failed(msg.clone());
+                        state.status_message = Some(msg);
+                    }
                 }
             }
+
+            if success {
+                state.status_message = Some("Transferencia completada".into());
+            }
+
+            let refresh = if success {
+                refresh_dirs_task(state)
+            } else {
+                Task::none()
+            };
+
+            Task::batch([refresh, start_next_transfer_if_idle(state)])
+        }
+
+        Message::CancelTransfer(id) => {
+            if let Some(idx) = state.transfer_index(id) {
+                match &state.transfers[idx].status {
+                    TransferStatus::Queued => {
+                        state.transfers[idx].status = TransferStatus::Cancelled;
+                        return start_next_transfer_if_idle(state);
+                    }
+                    TransferStatus::Active => {
+                        state.transfers[idx]
+                            .cancel
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
+            }
+            Task::none()
+        }
+
+        Message::RetryTransfer(id) => {
+            let Some(entry) = state
+                .transfers
+                .iter()
+                .find(|t| t.id == id && t.status.is_terminal())
+                .cloned()
+            else {
+                return Task::none();
+            };
+
+            state.transfers.push(TransferEntry {
+                id: Uuid::new_v4(),
+                connection_id: entry.connection_id,
+                kind: entry.kind,
+                filename: entry.filename,
+                local_path: entry.local_path,
+                remote_path: entry.remote_path,
+                total_bytes: entry.total_bytes,
+                transferred_bytes: 0,
+                status: TransferStatus::Queued,
+                cancel: Arc::new(AtomicBool::new(false)),
+            });
+
+            start_next_transfer_if_idle(state)
+        }
+
+        Message::ClearCompletedTransfers => {
+            state.transfers.retain(|t| !t.status.is_terminal());
+            Task::none()
+        }
+
+        Message::ToggleTransferQueue => {
+            state.queue_panel_visible = !state.queue_panel_visible;
+            Task::none()
         }
 
         Message::ToggleFtpLog => {
@@ -551,6 +612,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     use crate::ui::connection_modal::connection_modal;
     use crate::ui::file_panel::{PanelKind, file_panel};
     use crate::ui::ftp_log_panel::ftp_log_panel;
+    use crate::ui::transfer_queue_panel::transfer_queue_panel;
     use iced::widget::{column, container, row, text};
 
     let is_connected = matches!(state.remote_status, ConnectionStatus::Connected);
@@ -590,12 +652,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .height(Length::Fill);
 
     let transfer = crate::ui::transfer_bar::transfer_bar(
-        state.active_transfer.as_ref(),
-        state.transfer_bytes,
+        state.active_transfer(),
+        state.queued_count(),
+        state.queue_panel_visible,
         state.ftp_log.is_visible(),
     );
 
     let mut footer = column![];
+    if state.queue_panel_visible {
+        footer = footer.push(transfer_queue_panel(&state.transfers));
+    }
     if state.ftp_log.is_visible() {
         footer = footer.push(ftp_log_panel(&state.ftp_log));
     }
@@ -623,6 +689,124 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 pub fn theme(_state: &State) -> Theme {
     crate::ui::theme::miel_theme()
+}
+
+fn start_next_transfer_if_idle(state: &mut State) -> Task<Message> {
+    if state.transfers.iter().any(|t| t.status.is_active()) {
+        return Task::none();
+    }
+
+    let Some(idx) = state
+        .transfers
+        .iter()
+        .position(|t| matches!(t.status, TransferStatus::Queued))
+    else {
+        return Task::none();
+    };
+
+    state.transfers[idx].status = TransferStatus::Active;
+
+    let entry = state.transfers[idx].clone();
+    let mgr = state.ftp_manager.clone();
+
+    let Some(conn) = state.connection_cloned(entry.connection_id) else {
+        state.transfers[idx].status = TransferStatus::Failed("Conexión no encontrada".into());
+        return Task::none();
+    };
+
+    Task::stream(transfer_stream(entry, conn, mgr))
+}
+
+fn transfer_stream(
+    entry: TransferEntry,
+    conn: Connection,
+    mgr: FtpSessionManager,
+) -> impl Stream<Item = Message> {
+    stream::channel(32, async move |mut output| {
+        let (progress_tx, mut progress_rx) = mpsc::unbounded::<u64>();
+        let id = entry.id;
+        let total_hint = entry.total_bytes;
+
+        let work = async {
+            match entry.kind {
+                TransferKind::Upload => {
+                    mgr.upload_stream(
+                        conn,
+                        entry.local_path,
+                        entry.remote_path,
+                        entry.cancel.clone(),
+                        progress_tx,
+                    )
+                    .await
+                }
+                TransferKind::Download => {
+                    let local_dir = entry
+                        .local_path
+                        .parent()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    mgr.download_stream(
+                        conn,
+                        entry.remote_path,
+                        entry.filename,
+                        local_dir,
+                        entry.cancel.clone(),
+                        progress_tx,
+                    )
+                    .await
+                }
+            }
+        };
+
+        let mut work = pin!(work);
+        let mut progress_open = true;
+
+        loop {
+            tokio::select! {
+                response = &mut work => {
+                    let result = FtpTaskResult::from_response(response.result, response.log);
+                    let _ = output.send(Message::TransferFinished { id, result }).await;
+                    break;
+                }
+                bytes = progress_rx.next(), if progress_open => {
+                    match bytes {
+                        Some(n) => {
+                            let _ = output
+                                .send(Message::TransferProgress {
+                                    id,
+                                    bytes: n,
+                                    total: total_hint,
+                                })
+                                .await;
+                        }
+                        None => progress_open = false,
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn refresh_dirs_task(state: &State) -> Task<Message> {
+    let local_path = state.local_path.clone();
+    let remote_path = state.remote_path.clone();
+
+    let Some(id) = state.selected_connection else {
+        return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
+    };
+
+    let Some(conn) = state.connection_cloned(id) else {
+        return Task::perform(load_local_dir(local_path), Message::LocalDirLoaded);
+    };
+
+    let mgr = state.ftp_manager.clone();
+    Task::batch([
+        Task::perform(load_local_dir(local_path), Message::LocalDirLoaded),
+        Task::perform(
+            map_list_dir(mgr, conn, remote_path, Some(id)),
+            Message::RemoteDirLoaded,
+        ),
+    ])
 }
 
 fn join_local_path(base: &str, name: &str) -> String {
@@ -660,27 +844,6 @@ async fn map_list_dir(
     mgr.disconnect_all_except(conn.id).await;
 
     let response = ftp::client::list_dir(&mgr, conn, path).await;
-    FtpTaskResult::from_response(response.result, response.log)
-}
-
-async fn map_upload(
-    mgr: FtpSessionManager,
-    conn: Connection,
-    local_path: PathBuf,
-    remote_path: String,
-) -> FtpTaskResult<()> {
-    let response = ftp::client::upload(&mgr, conn, local_path, remote_path).await;
-    FtpTaskResult::from_response(response.result, response.log)
-}
-
-async fn map_download(
-    mgr: FtpSessionManager,
-    conn: Connection,
-    remote_path: String,
-    filename: String,
-    local_dir: PathBuf,
-) -> FtpTaskResult<()> {
-    let response = ftp::client::download(&mgr, conn, remote_path, filename, local_dir).await;
     FtpTaskResult::from_response(response.result, response.log)
 }
 

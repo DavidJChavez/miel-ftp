@@ -11,7 +11,7 @@ Para agentes de Cursor y convenciones del repo, ver **[AGENTS.md](AGENTS.md)** y
 - Panel dual local / remoto con navegación por carpetas
 - Site Manager: crear, editar y eliminar conexiones guardadas
 - Contraseñas en el llavero del sistema (Keychain / Credential Manager)
-- Subida y descarga de archivos (un archivo a la vez)
+- Subida y descarga de archivos con cola secuencial, progreso real y cancelación
 - Log FTP opcional (mostrar / ocultar desde la barra inferior)
 - Tema oscuro personalizado (acento miel)
 - Logging estructurado con `tracing`
@@ -105,12 +105,12 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 |---------|--------|
 | Subir un archivo | ✅ |
 | Bajar un archivo | ✅ |
-| Barra de estado de transferencia (nombre + spinner) | 🟡 |
-| Progreso real (bytes / %) vía `Subscription` | ⬜ |
-| Streaming (sin cargar archivo entero en RAM) | ⬜ |
-| Cola de transferencias (pendiente / activa / historial) | ⬜ |
+| Barra de estado de transferencia (nombre + progreso real) | ✅ |
+| Progreso real (bytes / %) vía `Task::stream` | ✅ |
+| Streaming (sin cargar archivo entero en RAM) | ✅ |
+| Cola de transferencias (pendiente / activa / historial) | ✅ |
 | Transferencias concurrentes | ⬜ |
-| Cancelar / reintentar | ⬜ |
+| Cancelar / reintentar | ✅ |
 | Resume interrumpido (`REST`) | ⬜ |
 | Throttling de ancho de banda | ⬜ |
 | Edición remota (temp + re-subida) | ⬜ |
@@ -144,7 +144,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Fase | Descripción | Estado |
 |------|-------------|--------|
 | **1** | Bases sólidas, Site Manager, deuda técnica, log FTP opcional | ✅ |
-| **2** | Sesión persistente, streaming, cola y progreso real | ⬜ |
+| **2** | Sesión persistente, streaming, cola y progreso real | ✅ |
 | **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | ⬜ |
 | **4** | FTPS/SFTP, sync, edición remota, throttling | ⬜ |
 

@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use futures::AsyncReadExt;
+use futures::channel::mpsc::UnboundedSender;
+use futures::{AsyncReadExt, AsyncWriteExt};
 use suppaftp::AsyncFtpStream;
+use tokio::io::{AsyncReadExt as TokioAsyncReadExt, AsyncWriteExt as TokioAsyncWriteExt};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::ftp::client::FtpResponse;
-use crate::ftp::config::{self, CONNECT_TIMEOUT, OPERATION_TIMEOUT};
+use crate::ftp::config::{self, CHUNK_SIZE, CONNECT_TIMEOUT, OPERATION_TIMEOUT};
 use crate::ftp::retry::{is_retryable, with_timeout};
 use crate::models::{connection::Connection, ftp_entry::FtpEntry};
 
@@ -19,11 +22,16 @@ fn cmd(line: impl AsRef<str>) -> String {
 }
 
 macro_rules! ftp_retry {
-    ($manager:expr, $operation:literal, $session_id:expr, $attempt:expr) => {{
+    ($manager:expr, $operation:literal, $session_id:expr, $cancel:expr, $attempt:expr) => {{
         let mut last_err: Option<AppError> = None;
         let mut ok = None;
 
         for try_num in 0..config::MAX_RETRIES {
+            if $cancel.load(Ordering::Relaxed) {
+                last_err = Some(AppError::Cancelled);
+                break;
+            }
+
             match $attempt.await {
                 Ok(value) => {
                     ok = Some(value);
@@ -104,7 +112,8 @@ impl FtpSessionManager {
 
     pub async fn connect(&self, conn: Connection) -> FtpResponse<()> {
         let mut log = Vec::new();
-        let result = ftp_retry!(self, "connect", conn.id, async {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "connect", conn.id, cancel, async {
             self.invalidate(conn.id).await;
             self.open_session(&conn, &mut log).await
         });
@@ -122,7 +131,8 @@ impl FtpSessionManager {
         path: String,
     ) -> FtpResponse<(String, Vec<FtpEntry>)> {
         let mut log = Vec::new();
-        let result = ftp_retry!(self, "list_dir", conn.id, async {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "list_dir", conn.id, cancel, async {
             self.ensure_session(&conn, &mut log).await?;
             self.exec_list_dir(&conn.id, &path, &mut log).await
         });
@@ -134,41 +144,66 @@ impl FtpSessionManager {
         FtpResponse { result, log }
     }
 
-    pub async fn upload(
+    pub async fn upload_stream(
         &self,
         conn: Connection,
         local_path: PathBuf,
         remote_path: String,
+        cancel: Arc<AtomicBool>,
+        progress: UnboundedSender<u64>,
     ) -> FtpResponse<()> {
         let mut log = Vec::new();
-        let result = ftp_retry!(self, "upload", conn.id, async {
+        let result = ftp_retry!(self, "upload", conn.id, cancel, async {
             self.ensure_session(&conn, &mut log).await?;
-            self.exec_upload(&conn.id, &local_path, &remote_path, &mut log)
-                .await
+            self.exec_upload_stream(
+                &conn.id,
+                &local_path,
+                remote_path.as_str(),
+                &cancel,
+                &progress,
+                &mut log,
+            )
+            .await
         });
 
-        if let Err(e) = &result {
+        if cancel.load(Ordering::Relaxed) || matches!(&result, Err(AppError::Cancelled)) {
+            log.push(cmd("CANCELLED"));
+            self.invalidate(conn.id).await;
+        } else if let Err(e) = &result {
             log.push(format!("< STOR ERROR: {e}"));
         }
 
         FtpResponse { result, log }
     }
 
-    pub async fn download(
+    pub async fn download_stream(
         &self,
         conn: Connection,
         remote_path: String,
         filename: String,
         local_dir: PathBuf,
+        cancel: Arc<AtomicBool>,
+        progress: UnboundedSender<u64>,
     ) -> FtpResponse<()> {
         let mut log = Vec::new();
-        let result = ftp_retry!(self, "download", conn.id, async {
+        let result = ftp_retry!(self, "download", conn.id, cancel, async {
             self.ensure_session(&conn, &mut log).await?;
-            self.exec_download(&conn.id, &remote_path, &filename, &local_dir, &mut log)
-                .await
+            self.exec_download_stream(
+                &conn.id,
+                remote_path.as_str(),
+                filename.as_str(),
+                local_dir.as_path(),
+                &cancel,
+                &progress,
+                &mut log,
+            )
+            .await
         });
 
-        if let Err(e) = &result {
+        if cancel.load(Ordering::Relaxed) || matches!(&result, Err(AppError::Cancelled)) {
+            log.push(cmd("CANCELLED"));
+            self.invalidate(conn.id).await;
+        } else if let Err(e) = &result {
             log.push(format!("< RETR ERROR: {e}"));
         }
 
@@ -190,9 +225,6 @@ impl FtpSessionManager {
     }
 
     async fn ensure_session(&self, conn: &Connection, log: &mut Vec<String>) -> AppResult<()> {
-        // Verify the existing session is alive with a NOOP before reusing it.
-        // This catches sessions left in inconsistent state after LIST on servers
-        // that don't cleanly reset the control connection after a data transfer.
         let noop_ok = {
             let mut sessions = self.sessions.lock().await;
             match sessions.get_mut(&conn.id) {
@@ -213,7 +245,6 @@ impl FtpSessionManager {
             return Ok(());
         }
 
-        // Session missing or stale — discard it silently and reconnect.
         {
             let mut sessions = self.sessions.lock().await;
             sessions.remove(&conn.id);
@@ -257,105 +288,181 @@ impl FtpSessionManager {
         Ok((current, entries))
     }
 
-    async fn exec_upload(
+    async fn exec_upload_stream(
         &self,
         id: &Uuid,
         local_path: &std::path::Path,
         remote_path: &str,
+        cancel: &Arc<AtomicBool>,
+        progress: &UnboundedSender<u64>,
         log: &mut Vec<String>,
     ) -> AppResult<()> {
-        // Read the file before acquiring the session lock so the mutex is not
-        // held during potentially slow local I/O (which would let the FTP
-        // control connection idle-timeout between CWD and STOR).
-        let file_bytes = tokio::fs::read(local_path).await?;
         let filename = local_path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("archivo")
             .to_string();
 
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+        let mut file = tokio::fs::File::open(local_path).await?;
+        let mut transferred: u64 = 0;
+        let mut buf = vec![0u8; CHUNK_SIZE];
 
-        log.push(cmd(format!("CWD {remote_path}")));
-        with_timeout(OPERATION_TIMEOUT, async {
-            session
-                .stream
-                .cwd(remote_path)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
+        let mut data_stream = {
+            let mut sessions = self.sessions.lock().await;
+            let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
 
-        log.push(cmd(format!("STOR {filename}")));
-        let mut cursor = futures::io::Cursor::new(file_bytes);
-        with_timeout(OPERATION_TIMEOUT, async {
-            session
-                .stream
-                .put_file(&filename, &mut cursor)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
+            log.push(cmd(format!("CWD {remote_path}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session
+                    .stream
+                    .cwd(remote_path)
+                    .await
+                    .map_err(AppError::from)
+            })
+            .await?;
 
-        debug!(%filename, "upload complete");
-        Ok(())
+            log.push(cmd(format!("STOR {filename}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session
+                    .stream
+                    .put_with_stream(&filename)
+                    .await
+                    .map_err(AppError::from)
+            })
+            .await?
+        };
+
+        let transfer_result = async {
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    let _ = data_stream.close().await;
+                    drop(data_stream);
+                    return Err(AppError::Cancelled);
+                }
+
+                let n = file.read(&mut buf).await.map_err(AppError::from)?;
+                if n == 0 {
+                    break;
+                }
+
+                with_timeout(OPERATION_TIMEOUT, async {
+                    data_stream
+                        .write_all(&buf[..n])
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?;
+
+                transferred += n as u64;
+                let _ = progress.unbounded_send(transferred);
+            }
+            Ok(data_stream)
+        }
+        .await;
+
+        match transfer_result {
+            Ok(data_stream) => {
+                let mut sessions = self.sessions.lock().await;
+                let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .finalize_put_stream(data_stream)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?;
+                debug!(%filename, bytes = transferred, "upload complete");
+                Ok(())
+            }
+            Err(AppError::Cancelled) => Err(AppError::Cancelled),
+            Err(e) => Err(e),
+        }
     }
 
-    async fn exec_download(
+    #[allow(clippy::too_many_arguments)]
+    async fn exec_download_stream(
         &self,
         id: &Uuid,
         remote_path: &str,
         filename: &str,
         local_dir: &std::path::Path,
+        cancel: &Arc<AtomicBool>,
+        progress: &UnboundedSender<u64>,
         log: &mut Vec<String>,
     ) -> AppResult<()> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
-
-        log.push(cmd(format!("CWD {remote_path}")));
-        with_timeout(OPERATION_TIMEOUT, async {
-            session
-                .stream
-                .cwd(remote_path)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
-
-        log.push(cmd(format!("RETR {filename}")));
-        let mut stream_dl = with_timeout(OPERATION_TIMEOUT, async {
-            session
-                .stream
-                .retr_as_stream(filename)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
-
-        let mut data = Vec::new();
-        with_timeout(OPERATION_TIMEOUT, async {
-            stream_dl
-                .read_to_end(&mut data)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
-
-        with_timeout(OPERATION_TIMEOUT, async {
-            session
-                .stream
-                .finalize_retr_stream(stream_dl)
-                .await
-                .map_err(AppError::from)
-        })
-        .await?;
-
         let dest = local_dir.join(filename);
-        tokio::fs::write(&dest, data).await?;
+        let mut file = tokio::fs::File::create(&dest).await?;
+        let mut transferred: u64 = 0;
+        let mut buf = vec![0u8; CHUNK_SIZE];
 
-        debug!(%filename, "download complete");
-        Ok(())
+        let mut data_stream = {
+            let mut sessions = self.sessions.lock().await;
+            let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+
+            log.push(cmd(format!("CWD {remote_path}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session
+                    .stream
+                    .cwd(remote_path)
+                    .await
+                    .map_err(AppError::from)
+            })
+            .await?;
+
+            log.push(cmd(format!("RETR {filename}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session
+                    .stream
+                    .retr_as_stream(filename)
+                    .await
+                    .map_err(AppError::from)
+            })
+            .await?
+        };
+
+        let transfer_result = async {
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    drop(data_stream);
+                    return Err(AppError::Cancelled);
+                }
+
+                let n = with_timeout(OPERATION_TIMEOUT, async {
+                    data_stream.read(&mut buf).await.map_err(AppError::from)
+                })
+                .await?;
+
+                if n == 0 {
+                    break;
+                }
+
+                file.write_all(&buf[..n]).await.map_err(AppError::from)?;
+                transferred += n as u64;
+                let _ = progress.unbounded_send(transferred);
+            }
+            Ok(data_stream)
+        }
+        .await;
+
+        match transfer_result {
+            Ok(data_stream) => {
+                let mut sessions = self.sessions.lock().await;
+                let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+                with_timeout(OPERATION_TIMEOUT, async {
+                    session
+                        .stream
+                        .finalize_retr_stream(data_stream)
+                        .await
+                        .map_err(AppError::from)
+                })
+                .await?;
+                debug!(%filename, bytes = transferred, "download complete");
+                Ok(())
+            }
+            Err(AppError::Cancelled) => Err(AppError::Cancelled),
+            Err(e) => Err(e),
+        }
     }
 }
 

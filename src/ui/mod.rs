@@ -4,3 +4,4 @@ pub mod ftp_log_panel;
 pub mod sidebar;
 pub mod theme;
 pub mod transfer_bar;
+pub mod transfer_queue_panel;

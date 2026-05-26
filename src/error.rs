@@ -46,4 +46,7 @@ pub enum AppError {
 
     #[error("Operation timed out after {0}s")]
     Timeout(u64),
+
+    #[error("Transferencia cancelada")]
+    Cancelled,
 }

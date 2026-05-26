@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use tracing::error;
 
 use crate::error::AppError;
@@ -23,27 +21,6 @@ pub async fn list_dir(
     path: String,
 ) -> FtpResponse<(String, Vec<crate::models::ftp_entry::FtpEntry>)> {
     manager.list_dir(conn, path).await
-}
-
-pub async fn upload(
-    manager: &FtpSessionManager,
-    conn: Connection,
-    local_path: PathBuf,
-    remote_path: String,
-) -> FtpResponse<()> {
-    manager.upload(conn, local_path, remote_path).await
-}
-
-pub async fn download(
-    manager: &FtpSessionManager,
-    conn: Connection,
-    remote_path: String,
-    filename: String,
-    local_dir: PathBuf,
-) -> FtpResponse<()> {
-    manager
-        .download(conn, remote_path, filename, local_dir)
-        .await
 }
 
 pub fn log_ftp_error(context: &str, err: &AppError) {
