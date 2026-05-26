@@ -88,15 +88,15 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Parser LIST robusto (`suppaftp::list::File`) | ✅ |
 | Rutas locales multiplataforma (`PathBuf`) | ✅ |
 | Indicador de estado de conexión (sidebar) | ✅ |
-| Breadcrumbs clickables | ⬜ |
-| Ordenar por columnas (nombre / tamaño / fecha) | ⬜ |
-| Filtro / búsqueda en carpeta | ⬜ |
+| Breadcrumbs clickables | ✅ |
+| Ordenar por columnas (nombre / tamaño / fecha) | ✅ |
+| Filtro / búsqueda en carpeta | ✅ |
 | Filtros globales (ocultar `.DS_Store`, etc.) | ⬜ |
-| Selección múltiple | ⬜ |
-| Menú contextual (rename, delete, mkdir, …) | ⬜ |
-| Atajos de teclado | ⬜ |
+| Selección múltiple | ✅ |
+| Menú contextual (rename, delete, mkdir, …) | ✅ |
+| Atajos de teclado | ✅ |
 | Drag & drop | ⬜ |
-| Mkdir / rename / delete (local y remoto) | ⬜ |
+| Mkdir / rename / delete (local y remoto) | ✅ |
 | Comparar / sincronizar directorios | ⬜ |
 
 ### Transferencias
@@ -124,7 +124,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Banner de mensajes de estado | ✅ |
 | Log FTP (comandos semánticos) | ✅ |
 | Log FTP siempre oculto por defecto; toggle mostrar/ocultar | ✅ |
-| Status bar (conteo archivos, tamaño total) | ⬜ |
+| Status bar (conteo archivos, tamaño total) | ✅ |
 | Toasts / notificaciones | ⬜ |
 | Iconos por tipo de archivo (SVG) | ⬜ |
 | Animaciones / skeleton loading | ⬜ |
@@ -145,7 +145,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 |------|-------------|--------|
 | **1** | Bases sólidas, Site Manager, deuda técnica, log FTP opcional | ✅ |
 | **2** | Sesión persistente, streaming, cola y progreso real | ✅ |
-| **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | ⬜ |
+| **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | 🟡 |
 | **4** | FTPS/SFTP, sync, edición remota, throttling | ⬜ |
 
 ## Licencia

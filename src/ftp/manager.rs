@@ -210,6 +210,83 @@ impl FtpSessionManager {
         FtpResponse { result, log }
     }
 
+    pub async fn mkdir(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        name: String,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "mkdir", conn.id, cancel, async {
+            self.ensure_session(&conn, &mut log).await?;
+            self.exec_mkdir(&conn.id, remote_dir.as_str(), name.as_str(), &mut log)
+                .await
+        });
+
+        if let Err(e) = &result {
+            log.push(format!("< MKD ERROR: {e}"));
+        }
+
+        FtpResponse { result, log }
+    }
+
+    pub async fn rename(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        old: String,
+        new: String,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "rename", conn.id, cancel, async {
+            self.ensure_session(&conn, &mut log).await?;
+            self.exec_rename(
+                &conn.id,
+                remote_dir.as_str(),
+                old.as_str(),
+                new.as_str(),
+                &mut log,
+            )
+            .await
+        });
+
+        if let Err(e) = &result {
+            log.push(format!("< RNFR/RNTO ERROR: {e}"));
+        }
+
+        FtpResponse { result, log }
+    }
+
+    pub async fn remove(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        name: String,
+        is_dir: bool,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "remove", conn.id, cancel, async {
+            self.ensure_session(&conn, &mut log).await?;
+            self.exec_remove(
+                &conn.id,
+                remote_dir.as_str(),
+                name.as_str(),
+                is_dir,
+                &mut log,
+            )
+            .await
+        });
+
+        if let Err(e) = &result {
+            log.push(format!("< DELETE ERROR: {e}"));
+        }
+
+        FtpResponse { result, log }
+    }
+
     async fn invalidate(&self, id: Uuid) {
         let mut sessions = self.sessions.lock().await;
         if let Some(mut session) = sessions.remove(&id) {
@@ -286,6 +363,95 @@ impl FtpSessionManager {
 
         log.push(cmd(format!("PWD → {current}")));
         Ok((current, entries))
+    }
+
+    async fn exec_mkdir(
+        &self,
+        id: &Uuid,
+        remote_dir: &str,
+        name: &str,
+        log: &mut Vec<String>,
+    ) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+
+        log.push(cmd(format!("CWD {remote_dir}")));
+        with_timeout(OPERATION_TIMEOUT, async {
+            session.stream.cwd(remote_dir).await.map_err(AppError::from)
+        })
+        .await?;
+
+        log.push(cmd(format!("MKD {name}")));
+        with_timeout(OPERATION_TIMEOUT, async {
+            session.stream.mkdir(name).await.map_err(AppError::from)
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    async fn exec_rename(
+        &self,
+        id: &Uuid,
+        remote_dir: &str,
+        old: &str,
+        new: &str,
+        log: &mut Vec<String>,
+    ) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+
+        log.push(cmd(format!("CWD {remote_dir}")));
+        with_timeout(OPERATION_TIMEOUT, async {
+            session.stream.cwd(remote_dir).await.map_err(AppError::from)
+        })
+        .await?;
+
+        log.push(cmd(format!("RNFR {old} → {new}")));
+        with_timeout(OPERATION_TIMEOUT, async {
+            session
+                .stream
+                .rename(old, new)
+                .await
+                .map_err(AppError::from)
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    async fn exec_remove(
+        &self,
+        id: &Uuid,
+        remote_dir: &str,
+        name: &str,
+        is_dir: bool,
+        log: &mut Vec<String>,
+    ) -> AppResult<()> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.get_mut(id).ok_or(AppError::NoConnection)?;
+
+        log.push(cmd(format!("CWD {remote_dir}")));
+        with_timeout(OPERATION_TIMEOUT, async {
+            session.stream.cwd(remote_dir).await.map_err(AppError::from)
+        })
+        .await?;
+
+        if is_dir {
+            log.push(cmd(format!("RMD {name}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session.stream.rmdir(name).await.map_err(AppError::from)
+            })
+            .await?;
+        } else {
+            log.push(cmd(format!("DELE {name}")));
+            with_timeout(OPERATION_TIMEOUT, async {
+                session.stream.rm(name).await.map_err(AppError::from)
+            })
+            .await?;
+        }
+
+        Ok(())
     }
 
     async fn exec_upload_stream(

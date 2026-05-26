@@ -1,8 +1,12 @@
 pub mod connection;
 pub mod connection_form;
+pub mod context_menu;
 pub mod ftp_entry;
 pub mod ftp_log;
 pub mod ftp_task;
 pub mod message;
+pub mod panel;
+pub mod prompt;
+pub mod sort;
 pub mod state;
 pub mod transfer;
