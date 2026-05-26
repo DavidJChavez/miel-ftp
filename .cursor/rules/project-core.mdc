@@ -1,0 +1,18 @@
+---
+description: Contexto esencial de MielFTP — objetivo, docs y capas
+alwaysApply: true
+---
+
+# MielFTP — núcleo del proyecto
+
+Cliente FTP en Rust + Iced. Objetivo: paridad FileZilla, UI estilo shadcn/Cursor (oscuro, acento miel).
+
+**Docs obligatorias:** `AGENTS.md`, `PLAN.md` (plan), `README.md` (roadmap ✅/⬜). No editar `PLAN.md` sin pedido del usuario.
+
+**Capas:** `app` orquesta; `models` (State/Message); `ftp` (red); `config` (JSON); `ui` (vistas). `ui`/`ftp` → `crate::models`, nunca `crate::app`.
+
+**Deuda conocida:** reconexión FTP por operación; transferencias en RAM. Fase 2 lo resuelve — no añadir más deuda similar.
+
+**Log FTP:** panel opcional (toggle), oculto por defecto.
+
+**Idioma UI:** español. **Comunicación al usuario:** español.

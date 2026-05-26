@@ -1,0 +1,43 @@
+---
+description: Convenciones Rust para miel-ftp
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust — MielFTP
+
+## Errores
+
+```rust
+// ✅ Capa de dominio / FTP
+pub async fn list_dir(...) -> AppResult<(String, Vec<FtpEntry>)>;
+
+// ✅ Mensajes iced (deben ser Clone)
+Message::RemoteDirLoaded(FtpTaskResult<(String, Vec<FtpEntry>)>);
+// FtpTaskResult: { result: Result<T, AppErrorMsg>, log: Vec<String> }
+```
+
+Evitar `Result<T, String>` en código nuevo. No usar `_ => Task::none()` en `update`.
+
+## Connection y secretos
+
+- `Connection::try_new` para validar host/puerto/usuario/nombre.
+- Password: `SecretString`; persistir solo en keyring (`Connection::store_password`).
+- `Debug` de `Connection` redacta password.
+
+## Paths
+
+```rust
+// ✅ Local
+let mut p = PathBuf::from(&state.local_path);
+p.push(&entry.name);
+
+// ✅ Remoto (siempre POSIX)
+format!("{}/{}", base.trim_end_matches('/'), name);
+```
+
+## Calidad
+
+Tras cambios: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test`.
+
+Cambios mínimos; sin abstraer helpers de una sola línea; sin `unsafe` sin justificación.

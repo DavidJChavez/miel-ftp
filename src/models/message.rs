@@ -1,32 +1,43 @@
 use uuid::Uuid;
 
-use crate::models::ftp_entry::FtpEntry;
+use crate::error::AppErrorMsg;
+use crate::models::{ftp_entry::FtpEntry, ftp_task::FtpTaskResult};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    // Sidebar
+    // Sidebar / Site Manager
     ConnectionSelected(Uuid),
     AddConnectionPressed,
+    EditConnectionPressed(Uuid),
+    ConnectionFormNameChanged(String),
+    ConnectionFormHostChanged(String),
+    ConnectionFormPortChanged(String),
+    ConnectionFormUsernameChanged(String),
+    ConnectionFormPasswordChanged(String),
+    ConnectionFormSave,
+    ConnectionFormCancel,
+    ConnectionFormDelete,
+    ConnectionDeleted,
 
     // FTP Connection
     ConnectPressed,
     Disconnected,
-    ConnectResult(Result<(), String>),
+    ConnectResult(FtpTaskResult<()>),
 
     // Remote navigation
     RemoteEntryOpened(FtpEntry),
-    RemoteDirLoaded(Result<(String, Vec<FtpEntry>), String>),
+    RemoteDirLoaded(FtpTaskResult<(String, Vec<FtpEntry>)>),
 
     // Local navigation
     LocalEntryOpened(FtpEntry),
-    LocalDirLoaded(Result<(String, Vec<FtpEntry>), String>),
+    LocalDirLoaded(Result<(String, Vec<FtpEntry>), AppErrorMsg>),
 
     // Transfer
     UploadPressed,
     DownloadPressed,
+    #[allow(dead_code)]
     TransferProgress(u64),
-    TransferComplete(String),
-    TransferError(String),
+    TransferFinished(FtpTaskResult<()>),
     LocalFileSelected(String),
     RemoteFileSelected(String),
 
@@ -34,4 +45,8 @@ pub enum Message {
     LocalRefresh,
     RemoteGoUp,
     RemoteRefresh,
+
+    // FTP log
+    ToggleFtpLog,
+    ClearFtpLog,
 }

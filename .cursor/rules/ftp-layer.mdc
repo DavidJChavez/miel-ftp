@@ -1,0 +1,40 @@
+---
+description: Capa FTP — suppaftp, logs y respuestas
+globs: "src/ftp/**/*.rs"
+alwaysApply: false
+---
+
+# FTP — `src/ftp/`
+
+## Respuesta estándar
+
+```rust
+pub struct FtpResponse<T> {
+    pub result: AppResult<T>,
+    pub log: Vec<String>,
+}
+```
+
+Registrar comandos semánticos: `> CONNECT`, `> USER`, `PASS ***`, `> CWD`, `> LIST`, `> STOR`, `> RETR`, `> QUIT`. En error: `< OPERATION ERROR: ...`.
+
+El reducer aplica `log` con `apply_ftp_log` — no duplicar logging solo en `tracing`.
+
+## Listados
+
+Usar `FtpEntry::from_list_line` (`suppaftp::list::File`). No parsear LIST a mano.
+
+## Login
+
+```rust
+ftp.login(conn.username.as_str(), conn.password()).await?;
+```
+
+## Pendiente (no implementar a medias)
+
+- Sesión persistente: actor `FtpSession` + `mpsc` (Fase 2).
+- Streaming upload/download (no `read_to_end` / `read` entero del archivo).
+- FTPS: `into_secure()` cuando se pida explícitamente.
+
+## Timeouts
+
+Aún no hay; al añadirlos usar `tokio::time::timeout` en operaciones de red.

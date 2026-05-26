@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::{
-    app::{FtpEntry, Message},
+    models::{ftp_entry::FtpEntry, message::Message},
     ui::theme::{
         BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER_SUBTLE, SUCCESS, TEXT_DIM, TEXT_MUTED,
         TEXT_PRIMARY,
@@ -209,7 +209,7 @@ fn file_row<'a>(
     .into()
 }
 
-fn action_btn(label: &str, msg: Message, enabled: bool) -> Element<Message> {
+fn action_btn(label: &str, msg: Message, enabled: bool) -> Element<'_, Message> {
     let btn = button(
         text(label)
             .size(12)

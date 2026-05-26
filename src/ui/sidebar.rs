@@ -1,14 +1,15 @@
 use iced::{
     Alignment, Border, Element, Length,
-    widget::{self, button, column, container, row, scrollable, text},
+    widget::{button, column, container, row, scrollable, text},
 };
 
-use crate::{
-    app::{Connection, ConnectionStatus, Message},
-    ui::theme::{
-        ACCENT, BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER, BORDER_SUBTLE, DANGER, SUCCESS,
-        TEXT_DIM, TEXT_MUTED, TEXT_PRIMARY,
-    },
+use crate::models::{
+    connection::{Connection, ConnectionStatus},
+    message::Message,
+};
+use crate::ui::theme::{
+    ACCENT, BG_HOVER, BG_SELECTED, BG_SURFACE, BORDER, BORDER_SUBTLE, DANGER, SUCCESS, TEXT_DIM,
+    TEXT_MUTED, TEXT_PRIMARY,
 };
 
 pub fn sidebar<'a>(
@@ -16,7 +17,6 @@ pub fn sidebar<'a>(
     selected_id: Option<uuid::Uuid>,
     remote_status: &'a ConnectionStatus,
 ) -> Element<'a, Message> {
-    // Header
     let header = container(
         row![
             text("conexiones")
@@ -48,7 +48,6 @@ pub fn sidebar<'a>(
     })
     .width(Length::Fill);
 
-    // Connections list
     let conn_list = scrollable(column(
         connections
             .iter()
@@ -56,8 +55,31 @@ pub fn sidebar<'a>(
     ))
     .height(Length::Fill);
 
-    // Footer
-    let footer = container(
+    let mut footer_col = column![].spacing(4);
+
+    if let Some(id) = selected_id {
+        footer_col = footer_col
+            .push(
+                button(text("conectar").size(11).color(ACCENT))
+                    .on_press(Message::ConnectPressed)
+                    .style(|_, _| button::Style {
+                        background: None,
+                        ..button::Style::default()
+                    })
+                    .padding([4, 2]),
+            )
+            .push(
+                button(text("editar").size(11).color(TEXT_DIM))
+                    .on_press(Message::EditConnectionPressed(id))
+                    .style(|_, _| button::Style {
+                        background: None,
+                        ..button::Style::default()
+                    })
+                    .padding([4, 2]),
+            );
+    }
+
+    footer_col = footer_col.push(
         button(
             row![
                 text("⚙").size(14).color(TEXT_DIM),
@@ -66,26 +88,27 @@ pub fn sidebar<'a>(
             .spacing(8)
             .align_y(Alignment::Center),
         )
-        .on_press(Message::AddConnectionPressed) // TODO: Message::OpenSettings
+        .on_press(Message::Disconnected)
         .style(|_, _| button::Style {
             background: None,
             ..button::Style::default()
         })
         .width(Length::Fill)
         .padding([6, 2]),
-    )
-    .padding([10, 14])
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        border: Border {
-            color: BORDER_SUBTLE,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        ..container::Style::default()
-    });
+    );
 
-    // Main wrapper
+    let footer = container(footer_col)
+        .padding([10, 14])
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            border: Border {
+                color: BORDER_SUBTLE,
+                width: 0.0,
+                radius: 0.0.into(),
+            },
+            ..container::Style::default()
+        });
+
     container(column![header, conn_list, footer])
         .width(220)
         .height(Length::Fill)
@@ -108,7 +131,6 @@ fn conn_item<'a>(
 ) -> Element<'a, Message> {
     let is_selected = selected_id == Some(conn.id);
 
-    // Status dot
     let dot_color = if is_selected {
         match remote_status {
             ConnectionStatus::Connected => SUCCESS,

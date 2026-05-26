@@ -1,0 +1,37 @@
+---
+description: Flujo de trabajo para agentes — git, alcance, verificación
+alwaysApply: true
+---
+
+# Flujo de agentes
+
+## Antes de codificar
+
+1. Revisar `README.md` roadmap y fase en `PLAN.md`.
+2. Confirmar si la tarea es Fase 1 (hecha), 2, 3 o 4 — no saltar fases sin acuerdo.
+
+## Durante
+
+- Diff mínimo; respetar convenciones del archivo tocado.
+- No crear commits ni push sin pedido explícito.
+- No modificar `git config`; no `--no-verify` en commits.
+- No añadir dependencias pesadas sin necesidad clara.
+
+## Después
+
+```bash
+cargo fmt
+cargo clippy -- -D warnings
+cargo test
+```
+
+## Comunicación
+
+- Responder al usuario en **español**.
+- Citas de código: bloque ` ```startLine:endLine:path ` (fence en línea propia).
+- No editar archivos de plan en `.cursor/plans/` del IDE; el plan del repo es `PLAN.md`.
+
+## Features nuevas
+
+- Actualizar `README.md` roadmap (✅/⬜) si el cambio cierra un ítem visible.
+- Actualizar `PLAN.md` solo si el usuario lo pide.

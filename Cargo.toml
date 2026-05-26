@@ -2,6 +2,11 @@
 name = "miel-ftp"
 version = "0.1.0"
 edition = "2024"
+description = "Cliente FTP multiplataforma con UI moderna, inspirado en FileZilla"
+license = "MIT"
+authors = ["David"]
+repository = "https://github.com/david/miel-ftp"
+categories = ["filesystem"]
 
 [dependencies]
 iced = { version = "0.14", features = ["tokio"] }
@@ -10,9 +15,14 @@ suppaftp = { version = "6", features = ["async-native-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
 futures = "0.3.32"
+secrecy = { version = "0.10", features = ["serde"] }
+keyring = "3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = "0.4"
 
 [profile.release]
 opt-level = 3

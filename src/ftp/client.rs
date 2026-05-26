@@ -1,29 +1,52 @@
-use std::path::PathBuf;
-use suppaftp::{AsyncFtpStream, FtpError};
-use tokio::io::AsyncReadExt;
+use std::path::{Path, PathBuf};
 
-use crate::app::{Connection, FtpEntry};
+use futures::AsyncReadExt;
+use suppaftp::AsyncFtpStream;
+use tracing::{debug, error, instrument};
 
-pub async fn upload(
-    conn: Connection,
-    local_path: PathBuf,
-    remote_path: String,
-) -> Result<(), String> {
+use crate::error::{AppError, AppResult};
+use crate::models::{connection::Connection, ftp_entry::FtpEntry};
+
+pub struct FtpResponse<T> {
+    pub result: AppResult<T>,
+    pub log: Vec<String>,
+}
+
+fn cmd(line: impl AsRef<str>) -> String {
+    format!("> {}", line.as_ref())
+}
+
+#[instrument(skip(conn), fields(host = %conn.host, port = conn.port))]
+pub async fn upload(conn: Connection, local_path: PathBuf, remote_path: String) -> FtpResponse<()> {
     let addr = format!("{}:{}", conn.host, conn.port);
+    let mut log = vec![
+        cmd(format!("CONNECT {addr}")),
+        cmd(format!("USER {}", conn.username)),
+        cmd("PASS ***"),
+    ];
 
-    let mut ftp = AsyncFtpStream::connect(&addr)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = run_upload(&conn, &addr, &remote_path, &local_path, &mut log).await;
 
-    ftp.login(&conn.username, &conn.password)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = &result {
+        log.push(format!("< STOR ERROR: {e}"));
+    }
 
-    ftp.cwd(&remote_path).await.map_err(|e| e.to_string())?;
+    FtpResponse { result, log }
+}
 
-    let file_bytes = tokio::fs::read(&local_path)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn run_upload(
+    conn: &Connection,
+    addr: &str,
+    remote_path: &str,
+    local_path: &PathBuf,
+    log: &mut Vec<String>,
+) -> AppResult<()> {
+    let mut ftp = AsyncFtpStream::connect(addr).await?;
+    ftp.login(conn.username.as_str(), conn.password()).await?;
+    log.push(cmd(format!("CWD {remote_path}")));
+    ftp.cwd(remote_path).await?;
+
+    let file_bytes = tokio::fs::read(local_path).await?;
 
     let filename = local_path
         .file_name()
@@ -31,156 +54,140 @@ pub async fn upload(
         .unwrap_or("archivo")
         .to_string();
 
+    log.push(cmd(format!("STOR {filename}")));
     let mut cursor = futures::io::Cursor::new(file_bytes);
+    ftp.put_file(&filename, &mut cursor).await?;
 
-    ftp.put_file(&filename, &mut cursor)
-        .await
-        .map_err(|e| e.to_string())?;
-
+    log.push(cmd("QUIT"));
     let _ = ftp.quit().await;
-
+    debug!(%filename, "upload complete");
     Ok(())
 }
 
+#[instrument(skip(conn), fields(host = %conn.host, port = conn.port))]
 pub async fn download(
     conn: Connection,
     remote_path: String,
     filename: String,
     local_dir: PathBuf,
-) -> Result<(), String> {
+) -> FtpResponse<()> {
     let addr = format!("{}:{}", conn.host, conn.port);
+    let mut log = vec![
+        cmd(format!("CONNECT {addr}")),
+        cmd(format!("USER {}", conn.username)),
+        cmd("PASS ***"),
+    ];
 
-    let mut ftp = AsyncFtpStream::connect(&addr)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = run_download(&conn, &addr, &remote_path, &filename, &local_dir, &mut log).await;
 
-    ftp.login(&conn.username, &conn.password)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = &result {
+        log.push(format!("< RETR ERROR: {e}"));
+    }
 
-    ftp.cwd(&remote_path).await.map_err(|e| e.to_string())?;
+    FtpResponse { result, log }
+}
 
-    let mut stream = ftp
-        .retr_as_stream(&filename)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn run_download(
+    conn: &Connection,
+    addr: &str,
+    remote_path: &str,
+    filename: &str,
+    local_dir: &Path,
+    log: &mut Vec<String>,
+) -> AppResult<()> {
+    let mut ftp = AsyncFtpStream::connect(addr).await?;
+    ftp.login(conn.username.as_str(), conn.password()).await?;
+    log.push(cmd(format!("CWD {remote_path}")));
+    ftp.cwd(remote_path).await?;
+
+    log.push(cmd(format!("RETR {filename}")));
+    let mut stream = ftp.retr_as_stream(filename).await?;
 
     let mut data = Vec::new();
-    futures::io::AsyncReadExt::read_to_end(&mut stream, &mut data)
-        .await
-        .map_err(|e| e.to_string())?;
+    stream.read_to_end(&mut data).await?;
 
-    ftp.finalize_retr_stream(stream)
-        .await
-        .map_err(|e| e.to_string())?;
+    ftp.finalize_retr_stream(stream).await?;
 
-    let dest = local_dir.join(&filename);
+    let dest = local_dir.join(filename);
+    tokio::fs::write(&dest, data).await?;
 
-    tokio::fs::write(&dest, data)
-        .await
-        .map_err(|e| e.to_string())?;
-
+    log.push(cmd("QUIT"));
     let _ = ftp.quit().await;
-
+    debug!(%filename, "download complete");
     Ok(())
 }
 
-pub async fn connect(conn: Connection) -> Result<(), String> {
+#[instrument(skip(conn), fields(host = %conn.host, port = conn.port))]
+pub async fn connect(conn: Connection) -> FtpResponse<()> {
     let addr = format!("{}:{}", conn.host, conn.port);
+    let mut log = vec![
+        cmd(format!("CONNECT {addr}")),
+        cmd(format!("USER {}", conn.username)),
+        cmd("PASS ***"),
+    ];
 
-    let mut ftp = AsyncFtpStream::connect(&addr)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = run_connect(&conn, &addr, &mut log).await;
 
-    ftp.login(&conn.username, &conn.password)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = &result {
+        log.push(format!("< LOGIN ERROR: {e}"));
+    }
 
+    FtpResponse { result, log }
+}
+
+async fn run_connect(conn: &Connection, addr: &str, log: &mut Vec<String>) -> AppResult<()> {
+    let mut ftp = AsyncFtpStream::connect(addr).await?;
+    ftp.login(conn.username.as_str(), conn.password()).await?;
+    log.push(cmd("QUIT"));
+    let _ = ftp.quit().await;
     Ok(())
 }
 
-pub async fn list_dir(conn: Connection, path: String) -> Result<(String, Vec<FtpEntry>), String> {
+#[instrument(skip(conn), fields(host = %conn.host, port = conn.port, %path))]
+pub async fn list_dir(conn: Connection, path: String) -> FtpResponse<(String, Vec<FtpEntry>)> {
     let addr = format!("{}:{}", conn.host, conn.port);
+    let mut log = vec![
+        cmd(format!("CONNECT {addr}")),
+        cmd(format!("USER {}", conn.username)),
+        cmd("PASS ***"),
+    ];
 
-    let mut ftp = AsyncFtpStream::connect(&addr)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = run_list_dir(&conn, &addr, &path, &mut log).await;
 
-    ftp.login(&conn.username, &conn.password)
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Err(e) = &result {
+        log.push(format!("< LIST ERROR: {e}"));
+    }
 
-    ftp.cwd(&path).await.map_err(|e| e.to_string())?;
+    FtpResponse { result, log }
+}
 
-    let current = ftp.pwd().await.map_err(|e| e.to_string())?;
+async fn run_list_dir(
+    conn: &Connection,
+    addr: &str,
+    path: &str,
+    log: &mut Vec<String>,
+) -> AppResult<(String, Vec<FtpEntry>)> {
+    let mut ftp = AsyncFtpStream::connect(addr).await?;
+    ftp.login(conn.username.as_str(), conn.password()).await?;
+    log.push(cmd(format!("CWD {path}")));
+    ftp.cwd(path).await?;
 
-    let list = ftp.list(None).await.map_err(|e| e.to_string())?;
+    let current = ftp.pwd().await?;
+    log.push(cmd("LIST"));
+    let list = ftp.list(None).await?;
 
     let entries = list
         .iter()
-        .filter_map(|line| parse_list_line(line))
+        .filter_map(|line| FtpEntry::from_list_line(line))
         .collect();
 
+    log.push(cmd(format!("PWD → {current}")));
+    log.push(cmd("QUIT"));
     let _ = ftp.quit().await;
 
     Ok((current, entries))
 }
 
-// parses lines of LIST unix-style:
-// drwxr-xr-x 2 user group 4096 Apr 10 12:00 folder
-// -rw-r--r-- 1 user group 1234 Apr 10 12:00 file.txt
-fn parse_list_line(line: &str) -> Option<FtpEntry> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-
-    // Format: perms links owner group size month day hour/year name
-    if parts.len() < 9 {
-        return None;
-    }
-
-    let is_dir = line.starts_with('d');
-    let size = if is_dir {
-        None
-    } else {
-        parts[4].parse::<u64>().ok()
-    };
-    let modified = format!("{} {} {}", parts[5], parts[6], parts[7]);
-
-    // Find the 9th token position at original line
-    // then take what's left
-    let name = extract_name(line, 8)?;
-
-    // ignorar . y ..
-    if name == "." || name == ".." {
-        return None;
-    }
-
-    Some(FtpEntry {
-        name,
-        is_dir,
-        size,
-        modified: Some(modified),
-    })
-}
-
-fn extract_name(line: &str, skip_tokens: usize) -> Option<String> {
-    let mut tokens_seen = 0;
-    let mut in_token = false;
-    let mut name_start = 0;
-
-    for (i, ch) in line.char_indices() {
-        let is_space = ch == ' ';
-
-        if !is_space && !in_token {
-            in_token = true;
-            if tokens_seen == skip_tokens {
-                name_start = i;
-                return Some(line[name_start..].to_string());
-            }
-        } else if is_space && in_token {
-            in_token = false;
-            tokens_seen += 1;
-        }
-    }
-
-    None
+pub fn log_ftp_error(context: &str, err: &AppError) {
+    error!(%context, error = %err, "FTP operation failed");
 }

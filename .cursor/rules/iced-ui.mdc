@@ -1,0 +1,29 @@
+---
+description: Patrones Iced y diseño UI de MielFTP
+globs: "src/ui/**/*.rs,src/app.rs"
+alwaysApply: false
+---
+
+# UI — Iced 0.14
+
+## Patrón
+
+- Vistas en `src/ui/*.rs` — funciones `pub fn ... -> Element<'_, Message>`.
+- Estado en `State`; eventos en `Message`; lógica async en `app::update` con `Task::perform`.
+- Colores: `crate::ui::theme::*` (`BG_BASE`, `ACCENT`, `TEXT_MUTED`, …).
+
+## Estilo
+
+- Tema oscuro, tipografía 10–13px, bordes sutiles.
+- Botones deshabilitados: sin `.on_press` (ver `action_btn` en `file_panel.rs`).
+- Modales: `stack![base, overlay]` como en `connection_modal.rs`.
+
+## Log FTP
+
+- **No** fijar el panel de log siempre visible.
+- Toggle: `Message::ToggleFtpLog`; panel solo si `state.ftp_log.is_visible()`.
+- Botón en barra inferior (`ftp_log_toggle_btn`).
+
+## Textos
+
+Labels y errores de formulario en **español** (ej. "puerto inválido", "Conexión guardada").
