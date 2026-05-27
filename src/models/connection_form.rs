@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::models::connection::{FtpMode, FtpSecurity};
+use crate::models::connection::{FtpMode, FtpSecurity, Protocol};
 
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionForm {
@@ -11,7 +11,7 @@ pub struct ConnectionForm {
     pub username: String,
     pub password: String,
     pub active_mode: bool,
-    pub use_ftps: bool,
+    pub protocol: Protocol,
     pub accept_invalid_certs: bool,
     pub error: Option<String>,
 }
@@ -20,6 +20,7 @@ impl ConnectionForm {
     pub fn new() -> Self {
         Self {
             port: String::from("21"),
+            protocol: Protocol::Ftp,
             ..Default::default()
         }
     }
@@ -33,7 +34,7 @@ impl ConnectionForm {
         username: &str,
         password: &str,
         mode: FtpMode,
-        security: FtpSecurity,
+        protocol: Protocol,
         accept_invalid_certs: bool,
     ) -> Self {
         Self {
@@ -44,7 +45,7 @@ impl ConnectionForm {
             username: username.to_string(),
             password: password.to_string(),
             active_mode: mode == FtpMode::Active,
-            use_ftps: security == FtpSecurity::Explicit,
+            protocol,
             accept_invalid_certs,
             error: None,
         }
@@ -59,10 +60,21 @@ impl ConnectionForm {
     }
 
     pub fn ftp_security(&self) -> FtpSecurity {
-        if self.use_ftps {
-            FtpSecurity::Explicit
-        } else {
-            FtpSecurity::Plain
+        match self.protocol {
+            Protocol::FtpsExplicit => FtpSecurity::Explicit,
+            _ => FtpSecurity::Plain,
+        }
+    }
+
+    pub fn set_protocol(&mut self, protocol: Protocol) {
+        self.protocol = protocol;
+        if protocol == Protocol::Sftp && self.port == "21" {
+            self.port = Protocol::Sftp.default_port().to_string();
+        } else if protocol != Protocol::Sftp && self.port == "22" {
+            self.port = Protocol::Ftp.default_port().to_string();
+        }
+        if !protocol.uses_tls_options() {
+            self.accept_invalid_certs = false;
         }
     }
 }

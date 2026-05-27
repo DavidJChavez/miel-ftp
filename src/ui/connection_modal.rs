@@ -1,9 +1,9 @@
 use iced::{
     Alignment, Border, Element, Length, Padding,
-    widget::{button, checkbox, column, container, row, text, text_input},
+    widget::{button, checkbox, column, container, pick_list, row, text, text_input},
 };
 
-use crate::models::{connection_form::ConnectionForm, message::Message};
+use crate::models::{connection::Protocol, connection_form::ConnectionForm, message::Message};
 use crate::ui::theme::{
     ACCENT, BG_BASE, BG_SURFACE, BORDER, DANGER, TEXT_DIM, TEXT_MUTED, TEXT_PRIMARY,
 };
@@ -15,7 +15,11 @@ pub fn connection_modal(form: &ConnectionForm) -> Element<'_, Message> {
         "Nueva conexión"
     };
 
-    let fields = column![
+    let protocols = vec![Protocol::Ftp, Protocol::FtpsExplicit, Protocol::Sftp];
+    let show_ftp_mode = form.protocol.uses_ftp_mode();
+    let show_tls = form.protocol.uses_tls_options();
+
+    let mut fields = column![
         field("Nombre", &form.name, Message::ConnectionFormNameChanged),
         field("Host", &form.host, Message::ConnectionFormHostChanged),
         field("Puerto", &form.port, Message::ConnectionFormPortChanged),
@@ -29,27 +33,40 @@ pub fn connection_modal(form: &ConnectionForm) -> Element<'_, Message> {
             &form.password,
             Message::ConnectionFormPasswordChanged
         ),
-        checkbox(form.active_mode)
-            .label("Modo activo (desactivado = pasivo)")
-            .on_toggle(Message::ConnectionFormModeChanged)
+        column![
+            text("Protocolo").size(11).color(TEXT_DIM),
+            pick_list(
+                protocols,
+                Some(form.protocol),
+                Message::ConnectionFormProtocolChanged,
+            )
             .text_size(12)
-            .style(checkbox_style),
-        checkbox(form.use_ftps)
-            .label("FTPS explícito (AUTH TLS)")
-            .on_toggle(Message::ConnectionFormUseFtpsChanged)
-            .text_size(12)
-            .style(checkbox_style),
-        checkbox(form.accept_invalid_certs)
-            .label("Aceptar certificados inválidos")
-            .on_toggle_maybe(if form.use_ftps {
-                Some(Message::ConnectionFormAcceptInvalidCertsChanged)
-            } else {
-                None
-            })
-            .text_size(12)
-            .style(checkbox_style),
+            .padding([6, 8])
+            .width(Length::Fill),
+        ]
+        .spacing(4),
     ]
     .spacing(10);
+
+    if show_ftp_mode {
+        fields = fields.push(
+            checkbox(form.active_mode)
+                .label("Modo activo (desactivado = pasivo)")
+                .on_toggle(Message::ConnectionFormModeChanged)
+                .text_size(12)
+                .style(checkbox_style),
+        );
+    }
+
+    if show_tls {
+        fields = fields.push(
+            checkbox(form.accept_invalid_certs)
+                .label("Aceptar certificados inválidos")
+                .on_toggle(Message::ConnectionFormAcceptInvalidCertsChanged)
+                .text_size(12)
+                .style(checkbox_style),
+        );
+    }
 
     let mut actions = row![
         button(text("Cancelar").size(12).color(TEXT_MUTED))
@@ -145,21 +162,7 @@ fn field<'a>(
             .on_input(on_change)
             .padding(8)
             .size(13)
-            .style(|_, status| text_input::Style {
-                background: iced::Background::Color(BG_BASE),
-                border: Border {
-                    color: match status {
-                        text_input::Status::Focused { .. } => ACCENT,
-                        _ => BORDER,
-                    },
-                    width: 1.0,
-                    radius: 5.0.into(),
-                },
-                icon: TEXT_MUTED,
-                placeholder: TEXT_DIM,
-                value: TEXT_PRIMARY,
-                selection: ACCENT,
-            }),
+            .style(text_input_style),
     ]
     .spacing(4)
     .into()
@@ -177,24 +180,28 @@ fn field_secret<'a>(
             .padding(8)
             .size(13)
             .secure(true)
-            .style(|_, status| text_input::Style {
-                background: iced::Background::Color(BG_BASE),
-                border: Border {
-                    color: match status {
-                        text_input::Status::Focused { .. } => ACCENT,
-                        _ => BORDER,
-                    },
-                    width: 1.0,
-                    radius: 5.0.into(),
-                },
-                icon: TEXT_MUTED,
-                placeholder: TEXT_DIM,
-                value: TEXT_PRIMARY,
-                selection: ACCENT,
-            }),
+            .style(text_input_style),
     ]
     .spacing(4)
     .into()
+}
+
+fn text_input_style(_: &iced::Theme, status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: iced::Background::Color(BG_BASE),
+        border: Border {
+            color: match status {
+                text_input::Status::Focused { .. } => ACCENT,
+                _ => BORDER,
+            },
+            width: 1.0,
+            radius: 5.0.into(),
+        },
+        icon: TEXT_MUTED,
+        placeholder: TEXT_DIM,
+        value: TEXT_PRIMARY,
+        selection: ACCENT,
+    }
 }
 
 fn checkbox_style(_theme: &iced::Theme, status: checkbox::Status) -> checkbox::Style {

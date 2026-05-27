@@ -47,6 +47,7 @@ mod tests {
             show_dotfiles: true,
             custom_hidden: vec!["foo.bar".into()],
             bandwidth: crate::models::settings::Bandwidth::KBps(512),
+            max_concurrent: 2,
         };
 
         let json = serde_json::to_string(&settings).unwrap();

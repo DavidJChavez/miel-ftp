@@ -72,7 +72,9 @@ mod tests {
             username: "user".into(),
             mode: FtpMode::Passive,
             security: FtpSecurity::Plain,
+            protocol: crate::models::connection::Protocol::Ftp,
             accept_invalid_certs: false,
+            bookmarks: vec![],
         };
 
         let json = serde_json::to_string(&record).unwrap();
@@ -90,8 +92,10 @@ mod tests {
             "user".into(),
             SecretString::from("pass".to_string()),
             FtpMode::Passive,
+            crate::models::connection::Protocol::Ftp,
             FtpSecurity::Plain,
             false,
+            vec![],
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }

@@ -11,14 +11,24 @@ use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER_SUBTLE, TEXT_DIM, TEXT_MUTED};
 
 pub fn transfer_bar(
     active: Option<&TransferEntry>,
+    active_count: usize,
     queued_count: usize,
+    pending_edits: usize,
     queue_visible: bool,
     ftp_log_visible: bool,
     settings_modal_open: bool,
 ) -> Element<'_, Message> {
     let status = match active {
-        None => row![text("Sin transferencias activas").size(11).color(TEXT_DIM),]
-            .align_y(Alignment::Center),
+        None => row![
+            text(if active_count > 0 {
+                format!("{active_count} transferencias activas")
+            } else {
+                String::from("Sin transferencias activas")
+            })
+            .size(11)
+            .color(TEXT_DIM),
+        ]
+        .align_y(Alignment::Center),
 
         Some(t) => {
             let action = match t.kind {
@@ -76,10 +86,20 @@ pub fn transfer_bar(
 
     let queue_color = if queue_visible { ACCENT } else { TEXT_DIM };
 
+    let mut extra = row![].spacing(6);
+    if pending_edits > 0 {
+        extra = extra.push(
+            text(format!("{pending_edits} edición(es) pendiente(s)"))
+                .size(10)
+                .color(ACCENT),
+        );
+    }
+
     let content = row![
         ftp_log_toggle_btn(ftp_log_visible),
         settings_toggle_btn(settings_modal_open),
         queue_toggle_btn(&queue_label, queue_color, queue_visible),
+        extra,
         status,
     ]
     .spacing(10)

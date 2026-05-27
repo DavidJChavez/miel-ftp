@@ -26,7 +26,48 @@ impl FtpMode {
     }
 }
 
-/// Seguridad de transporte FTP.
+/// Protocolo de conexión.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Ftp,
+    FtpsExplicit,
+    Sftp,
+}
+
+impl Protocol {
+    pub fn label(self) -> &'static str {
+        match self {
+            Protocol::Ftp => "FTP",
+            Protocol::FtpsExplicit => "FTPS",
+            Protocol::Sftp => "SFTP",
+        }
+    }
+
+    pub fn default_port(self) -> u16 {
+        match self {
+            Protocol::Ftp | Protocol::FtpsExplicit => 21,
+            Protocol::Sftp => 22,
+        }
+    }
+
+    pub fn uses_ftp_mode(self) -> bool {
+        !matches!(self, Protocol::Sftp)
+    }
+
+    pub fn uses_tls_options(self) -> bool {
+        matches!(self, Protocol::FtpsExplicit)
+    }
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Seguridad de transporte FTP (compatibilidad JSON legacy).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FtpSecurity {
@@ -48,7 +89,20 @@ pub struct ConnectionRecord {
     #[serde(default)]
     pub security: FtpSecurity,
     #[serde(default)]
+    pub protocol: Protocol,
+    #[serde(default)]
     pub accept_invalid_certs: bool,
+    #[serde(default)]
+    pub bookmarks: Vec<String>,
+}
+
+impl ConnectionRecord {
+    pub fn effective_protocol(&self) -> Protocol {
+        match (self.protocol, self.security) {
+            (Protocol::Ftp, FtpSecurity::Explicit) => Protocol::FtpsExplicit,
+            (p, _) => p,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -59,8 +113,10 @@ pub struct Connection {
     pub port: u16,
     pub username: String,
     pub mode: FtpMode,
+    pub protocol: Protocol,
     pub security: FtpSecurity,
     pub accept_invalid_certs: bool,
+    pub bookmarks: Vec<String>,
     password: SecretString,
 }
 
@@ -73,8 +129,10 @@ impl fmt::Debug for Connection {
             .field("port", &self.port)
             .field("username", &self.username)
             .field("mode", &self.mode)
+            .field("protocol", &self.protocol)
             .field("security", &self.security)
             .field("accept_invalid_certs", &self.accept_invalid_certs)
+            .field("bookmarks", &self.bookmarks)
             .field("password", &"[REDACTED]")
             .finish()
     }
@@ -90,8 +148,10 @@ impl Connection {
         username: String,
         password: impl Into<SecretString>,
         mode: FtpMode,
+        protocol: Protocol,
         security: FtpSecurity,
         accept_invalid_certs: bool,
+        bookmarks: Vec<String>,
     ) -> AppResult<Self> {
         if name.trim().is_empty() {
             return Err(AppError::Validation(
@@ -119,10 +179,29 @@ impl Connection {
             port,
             username: username.trim().to_string(),
             mode,
+            protocol,
             security,
             accept_invalid_certs,
+            bookmarks,
             password: password.into(),
         })
+    }
+
+    pub fn effective_protocol(&self) -> Protocol {
+        match (self.protocol, self.security) {
+            (Protocol::Ftp, FtpSecurity::Explicit) => Protocol::FtpsExplicit,
+            (p, _) => p,
+        }
+    }
+
+    pub fn add_bookmark(&mut self, path: String) {
+        if !self.bookmarks.contains(&path) {
+            self.bookmarks.push(path);
+        }
+    }
+
+    pub fn remove_bookmark(&mut self, path: &str) {
+        self.bookmarks.retain(|b| b != path);
     }
 
     pub fn password(&self) -> &str {
@@ -138,11 +217,14 @@ impl Connection {
             username: self.username.clone(),
             mode: self.mode,
             security: self.security,
+            protocol: self.protocol,
             accept_invalid_certs: self.accept_invalid_certs,
+            bookmarks: self.bookmarks.clone(),
         }
     }
 
     pub fn from_record(record: ConnectionRecord, password: SecretString) -> Self {
+        let protocol = record.effective_protocol();
         Self {
             id: record.id,
             name: record.name,
@@ -150,8 +232,10 @@ impl Connection {
             port: record.port,
             username: record.username,
             mode: record.mode,
+            protocol,
             security: record.security,
             accept_invalid_certs: record.accept_invalid_certs,
+            bookmarks: record.bookmarks,
             password,
         }
     }
@@ -190,6 +274,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn connection_record_effective_protocol_from_legacy_security() {
+        let record = ConnectionRecord {
+            id: Uuid::nil(),
+            name: "s".into(),
+            host: "h".into(),
+            port: 21,
+            username: "u".into(),
+            mode: FtpMode::Passive,
+            security: FtpSecurity::Explicit,
+            protocol: Protocol::Ftp,
+            accept_invalid_certs: false,
+            bookmarks: vec![],
+        };
+        assert_eq!(record.effective_protocol(), Protocol::FtpsExplicit);
+    }
+
+    #[test]
     fn connection_record_defaults_mode_passive() {
         let json = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"s","host":"h","port":21,"username":"u"}"#;
         let record: ConnectionRecord = serde_json::from_str(json).unwrap();
@@ -208,7 +309,9 @@ mod tests {
             username: "user".into(),
             mode: FtpMode::Active,
             security: FtpSecurity::Plain,
+            protocol: Protocol::Ftp,
             accept_invalid_certs: false,
+            bookmarks: vec![],
         };
 
         let json = serde_json::to_string(&record).unwrap();
@@ -226,7 +329,9 @@ mod tests {
             username: "user".into(),
             mode: FtpMode::Passive,
             security: FtpSecurity::Explicit,
+            protocol: Protocol::FtpsExplicit,
             accept_invalid_certs: true,
+            bookmarks: vec![],
         };
 
         let json = serde_json::to_string(&record).unwrap();
@@ -244,11 +349,14 @@ mod tests {
             "user".into(),
             SecretString::from("pass"),
             FtpMode::Active,
+            Protocol::FtpsExplicit,
             FtpSecurity::Explicit,
             true,
+            vec![],
         )
         .unwrap();
         assert_eq!(conn.mode, FtpMode::Active);
+        assert_eq!(conn.protocol, Protocol::FtpsExplicit);
         assert_eq!(conn.security, FtpSecurity::Explicit);
         assert!(conn.accept_invalid_certs);
     }

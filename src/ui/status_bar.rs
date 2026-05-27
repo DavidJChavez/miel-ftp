@@ -2,13 +2,14 @@ use std::collections::HashSet;
 
 use iced::{
     Alignment, Border, Element, Length,
-    widget::{container, row, text},
+    widget::{button, container, row, text},
 };
 
 use crate::models::{
-    ftp_entry::FtpEntry, message::Message, panel::PanelKind, settings::AppSettings, sort::SortSpec,
+    connection::ConnectionStatus, ftp_entry::FtpEntry, message::Message, panel::PanelKind,
+    settings::AppSettings, sort::SortSpec,
 };
-use crate::ui::theme::{BG_SURFACE, BORDER_SUBTLE, TEXT_MUTED};
+use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER_SUBTLE, TEXT_MUTED};
 use crate::ui::transfer_bar::format_bytes;
 
 pub fn status_bar(
@@ -18,6 +19,7 @@ pub fn status_bar(
     sort: SortSpec,
     filter: &str,
     settings: &AppSettings,
+    remote_status: &ConnectionStatus,
 ) -> Element<'static, Message> {
     let visible = crate::models::sort::apply_view(entries, sort, filter, settings);
     let total = visible.len();
@@ -45,10 +47,32 @@ pub fn status_bar(
         format_bytes(total_bytes)
     );
 
+    let is_connected = matches!(remote_status, ConnectionStatus::Connected);
+
     container(
-        row![text(label).size(10).color(TEXT_MUTED),]
-            .spacing(8)
-            .align_y(Alignment::Center),
+        row![
+            text(label).size(10).color(TEXT_MUTED),
+            iced::widget::Space::new().width(Length::Fill),
+            if is_connected {
+                button(text("sincronizar").size(10).color(ACCENT))
+                    .on_press(Message::OpenSyncPanel)
+                    .padding([2, 8])
+                    .style(|_, _| button::Style {
+                        background: None,
+                        border: Border {
+                            color: BORDER_SUBTLE,
+                            width: 0.5,
+                            radius: 4.0.into(),
+                        },
+                        text_color: ACCENT,
+                        ..button::Style::default()
+                    })
+            } else {
+                button(text("sincronizar").size(10).color(TEXT_MUTED)).padding([2, 8])
+            },
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     )
     .padding([4, 14])
     .height(26)

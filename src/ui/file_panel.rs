@@ -29,6 +29,7 @@ pub fn file_panel<'a>(
     sort: SortSpec,
     filter: &'a str,
     drop_hover: bool,
+    loading: bool,
     settings: &AppSettings,
 ) -> Element<'a, Message> {
     let (panel_icon, label, label_color) = match kind {
@@ -160,7 +161,29 @@ pub fn file_panel<'a>(
 
     let visible = apply_view(entries, sort, filter, settings);
 
-    let file_rows: Vec<Element<Message>> = if visible.is_empty() {
+    let file_rows: Vec<Element<Message>> = if loading {
+        (0..8)
+            .map(|_| {
+                container(iced::widget::Space::new().height(18))
+                    .padding([6, 12])
+                    .width(Length::Fill)
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(iced::Color {
+                            r: 0.12,
+                            g: 0.12,
+                            b: 0.12,
+                            a: 1.0,
+                        })),
+                        border: Border {
+                            radius: 3.0.into(),
+                            ..Border::default()
+                        },
+                        ..container::Style::default()
+                    })
+                    .into()
+            })
+            .collect()
+    } else if visible.is_empty() {
         let empty_msg = if !entries.is_empty() && filter.trim().is_empty() {
             "Sin elementos (filtros activos)"
         } else if is_connected || matches!(kind, PanelKind::Local) {

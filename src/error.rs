@@ -32,6 +32,9 @@ pub enum AppError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("Connection error: {0}")]
+    Connection(String),
+
     #[error("No connection selected")]
     NoConnection,
 

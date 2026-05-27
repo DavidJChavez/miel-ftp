@@ -6,7 +6,10 @@ use iced::{
 use crate::models::{context_menu::ContextMenu, message::Message, panel::PanelKind};
 use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER, TEXT_MUTED, TEXT_PRIMARY};
 
-pub fn context_menu_overlay(menu: &ContextMenu) -> Element<'_, Message> {
+pub fn context_menu_overlay<'a>(
+    menu: &'a ContextMenu,
+    pending_edits: &'a [crate::models::remote_edit::RemoteEdit],
+) -> Element<'a, Message> {
     let backdrop = mouse_area(
         container(iced::widget::Space::new())
             .width(Length::Fill)
@@ -14,24 +17,42 @@ pub fn context_menu_overlay(menu: &ContextMenu) -> Element<'_, Message> {
     )
     .on_press(Message::ContextMenuClosed);
 
+    let mut items = vec![
+        menu_item("Nueva carpeta", Message::MkdirPressed(menu.panel)),
+        menu_item("Renombrar", Message::RenamePressed(menu.panel)),
+        menu_item("Eliminar", Message::DeletePressed(menu.panel)),
+    ];
+
+    if matches!(menu.panel, PanelKind::Remote) {
+        items.push(menu_item(
+            "Editar",
+            Message::EditRemoteFile(menu.target.clone()),
+        ));
+        if let Some(edit) = pending_edits.iter().find(|e| e.filename == menu.target) {
+            items.push(menu_item(
+                "Re-subir edición",
+                Message::ReuploadRemoteEdit(edit.temp_path.clone()),
+            ));
+        }
+    }
+
+    items.push(menu_item(
+        match menu.panel {
+            PanelKind::Local => "Subir",
+            PanelKind::Remote => "Bajar",
+        },
+        match menu.panel {
+            PanelKind::Local => Message::UploadPressed,
+            PanelKind::Remote => Message::DownloadPressed,
+        },
+    ));
+
     let menu_card = container(
         column![
             text(format!("«{}»", menu.target))
                 .size(10)
                 .color(TEXT_MUTED),
-            menu_item("Nueva carpeta", Message::MkdirPressed(menu.panel)),
-            menu_item("Renombrar", Message::RenamePressed(menu.panel)),
-            menu_item("Eliminar", Message::DeletePressed(menu.panel)),
-            menu_item(
-                match menu.panel {
-                    PanelKind::Local => "Subir",
-                    PanelKind::Remote => "Bajar",
-                },
-                match menu.panel {
-                    PanelKind::Local => Message::UploadPressed,
-                    PanelKind::Remote => Message::DownloadPressed,
-                },
-            ),
+            column(items).spacing(2),
         ]
         .spacing(2)
         .padding(4),

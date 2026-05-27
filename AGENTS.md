@@ -44,14 +44,13 @@ error.rs         → AppError, AppErrorMsg (Arc para Clone en Message)
 
 ## Estado actual vs objetivo
 
-| Hecho (Fase 1) | Pendiente (Fase 2+) |
-|----------------|---------------------|
-| Site Manager + keyring | Sesión FTP persistente (actor) |
-| Listar / subir / bajar 1 archivo | Streaming + cola de transferencias |
-| Log FTP **opcional** (toggle) | Progreso real (`Subscription`) |
-| `AppError` tipado | FTPS, drag & drop, multi-select |
-
-Deuda conocida: **upload/download cargan el archivo entero en RAM**. Fase 2: streaming, cola y progreso real.
+| Hecho (Fases 1–4) | Pendiente futuro |
+|-------------------|------------------|
+| Site Manager + keyring, quickconnect, bookmarks | Cobertura de tests ampliada |
+| Sesión persistente, streaming, cola, progreso concurrente | Host key verification SFTP estricta |
+| UX FileZilla + sync/compare + edición remota | Watcher auto re-upload en edición remota |
+| FTPS/SFTP, throttling, filtros, toasts, skeleton | |
+| Log FTP **opcional** (toggle), `AppError` tipado | |
 
 ## Convenciones de código
 

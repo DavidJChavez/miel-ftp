@@ -41,8 +41,8 @@ Hoy `update` invoca funciones en `ftp::client` que hacen **connect + login + …
 | A1 | Crítico | Reconectar en cada operación | **Hecho** → `FtpSessionManager` |
 | A2 | Crítico | Upload/download cargan archivo entero en RAM | Pendiente → streaming |
 | A3 | Crítico | Sin progreso real (`TransferProgress` no emitido) | Pendiente → `Subscription` |
-| A4 | — | Sin FTPS (`into_secure()` nunca llamado) | Pendiente |
-| A5 | — | Sin SFTP (fuera de `suppaftp`) | Pendiente / decisión alcance |
+| A4 | — | Sin FTPS (`into_secure()` nunca llamado) | **Hecho** → `FtpSecurity::Explicit` en `manager.rs` |
+| A5 | — | Sin SFTP (fuera de `suppaftp`) | Pendiente → decisión de alcance |
 | A6 | — | Parser LIST custom frágil | **Hecho** → `suppaftp::list::File` |
 | A7 | — | Sin timeouts en operaciones de red | **Hecho** → `with_timeout` + reintentos |
 | A8 | — | Imports / warnings menores | **Hecho** |
@@ -162,13 +162,18 @@ Entregable independiente; **completada** salvo mejoras menores de UX.
 
 ### Fase 4 — Seguro y avanzado
 
-- [ ] FTPS explícito (`into_secure()`)
-- [ ] SFTP (opcional; p. ej. `russh-sftp`)
-- [ ] Sincronizar / comparar directorios
-- [ ] Edición remota (temp + re-upload on save)
-- [ ] Throttling de ancho de banda
-- [ ] Filtros por patrón (`.DS_Store`, `node_modules`, …)
-- [ ] Quickconnect, bookmarks, modo activo/pasivo
+- [x] FTPS explícito (`into_secure()`, `FtpSecurity::Explicit`)
+- [x] Modo FTP activo / pasivo configurable
+- [x] Throttling de ancho de banda
+- [x] Filtros por patrón (`.DS_Store`, dotfiles, lista personalizable)
+- [x] SFTP (`russh` + `russh-sftp`)
+- [x] Quickconnect bar (conexión rápida sin Site Manager)
+- [x] Bookmarks por sitio (rutas favoritas dentro de una conexión)
+- [x] Sincronizar / comparar directorios
+- [x] Edición remota (temp + re-subida al guardar)
+- [x] Transferencias concurrentes (cola; N activas configurable 1–5)
+- [x] Toasts / notificaciones autodismiss
+- [x] Skeleton loading en paneles de archivos
 
 ---
 
@@ -212,4 +217,4 @@ Entregable independiente; **completada** salvo mejoras menores de UX.
 
 ---
 
-*Última actualización: alineado con la implementación post-auditoría (Fase 1 + log FTP opcional).*
+*Última actualización: Fase 4 completada (SFTP, quickconnect, bookmarks, sync, edición remota, concurrentes, toasts, skeleton).*

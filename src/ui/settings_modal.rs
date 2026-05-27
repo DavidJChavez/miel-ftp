@@ -12,6 +12,7 @@ pub fn settings_modal<'a>(
     settings: &'a AppSettings,
     custom_draft: &'a str,
     bandwidth_draft: &'a str,
+    max_concurrent_draft: &'a str,
 ) -> Element<'a, Message> {
     let hide_system = checkbox(settings.hide_system_files)
         .label("Ocultar archivos del sistema")
@@ -94,6 +95,15 @@ pub fn settings_modal<'a>(
                 .color(TEXT_DIM),
             text_input("0", bandwidth_draft)
                 .on_input(Message::SettingsBandwidthDraftChanged)
+                .padding([6, 8])
+                .size(12)
+                .width(Length::Fill)
+                .style(text_input_style),
+            text("Transferencias concurrentes (1–5)")
+                .size(11)
+                .color(TEXT_DIM),
+            text_input("1", max_concurrent_draft)
+                .on_input(Message::SettingsMaxConcurrentChanged)
                 .padding([6, 8])
                 .size(12)
                 .width(Length::Fill)

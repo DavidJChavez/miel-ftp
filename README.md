@@ -73,11 +73,11 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Site Manager (crear / editar / eliminar) | ✅ |
 | Persistencia `sites.json` (escritura atómica) | ✅ |
 | Contraseñas en keyring (`secrecy`) | ✅ |
-| Quickconnect bar | ⬜ |
+| Quickconnect bar | ✅ |
 | FTPS (TLS explícito) | ✅ |
-| SFTP | ⬜ |
+| SFTP | ✅ |
 | Modo FTP activo / pasivo configurable | ✅ |
-| Bookmarks por sitio | ⬜ |
+| Bookmarks por sitio | ✅ |
 
 ### Navegación de archivos
 
@@ -97,7 +97,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Atajos de teclado | ✅ |
 | Drag & drop | ✅ |
 | Mkdir / rename / delete (local y remoto) | ✅ |
-| Comparar / sincronizar directorios | ⬜ |
+| Comparar / sincronizar directorios | ✅ |
 
 ### Transferencias
 
@@ -109,11 +109,11 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Progreso real (bytes / %) vía `Task::stream` | ✅ |
 | Streaming (sin cargar archivo entero en RAM) | ✅ |
 | Cola de transferencias (pendiente / activa / historial) | ✅ |
-| Transferencias concurrentes | ⬜ |
+| Transferencias concurrentes | ✅ |
 | Cancelar / reintentar | ✅ |
 | Resume interrumpido (`REST`) | ✅ |
 | Throttling de ancho de banda | ✅ |
-| Edición remota (temp + re-subida) | ⬜ |
+| Edición remota (temp + re-subida) | ✅ |
 
 ### UI, UX y depuración
 
@@ -125,9 +125,9 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Log FTP (comandos semánticos) | ✅ |
 | Log FTP siempre oculto por defecto; toggle mostrar/ocultar | ✅ |
 | Status bar (conteo archivos, tamaño total) | ✅ |
-| Toasts / notificaciones | ⬜ |
+| Toasts / notificaciones | ✅ |
 | Iconos por tipo de archivo (SVG) | ✅ |
-| Animaciones / skeleton loading | ⬜ |
+| Animaciones / skeleton loading | ✅ |
 
 ### Calidad y proyecto
 
@@ -146,7 +146,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | **1** | Bases sólidas, Site Manager, deuda técnica, log FTP opcional | ✅ |
 | **2** | Sesión persistente, streaming, cola y progreso real | ✅ |
 | **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | ✅ |
-| **4** | FTPS/SFTP, sync, edición remota, throttling | 🟡 |
+| **4** | FTPS/SFTP, sync, edición remota, throttling | ✅ |
 
 ## Licencia
 

@@ -18,10 +18,11 @@ use crate::error::{AppError, AppResult};
 use crate::ftp::client::FtpResponse;
 use crate::ftp::config::{self, CHUNK_SIZE, CONNECT_TIMEOUT, OPERATION_TIMEOUT};
 use crate::ftp::retry::{is_retryable, with_timeout};
+use crate::ftp::sftp::{self, SftpSessionHandle};
 use crate::ftp::throttle;
 use crate::ftp::tls;
 use crate::models::{
-    connection::{Connection, FtpMode, FtpSecurity},
+    connection::{Connection, FtpMode, Protocol},
     ftp_entry::FtpEntry,
 };
 
@@ -80,16 +81,18 @@ struct ActiveSession {
     stream: AsyncNativeTlsFtpStream,
 }
 
-/// Gestor de sesiones FTP: un stream vivo por `connection.id`.
+/// Gestor de sesiones FTP/SFTP: un stream vivo por `connection.id`.
 #[derive(Clone)]
 pub struct FtpSessionManager {
     sessions: Arc<Mutex<HashMap<Uuid, ActiveSession>>>,
+    sftp_sessions: Arc<Mutex<HashMap<Uuid, SftpSessionHandle>>>,
 }
 
 impl FtpSessionManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            sftp_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -99,6 +102,8 @@ impl FtpSessionManager {
             let _ = session.stream.quit().await;
             debug!(%id, "sesión FTP cerrada");
         }
+        drop(sessions);
+        self.sftp_sessions.lock().await.remove(&id);
     }
 
     pub async fn disconnect_all_except(&self, keep: Uuid) {
@@ -116,9 +121,19 @@ impl FtpSessionManager {
         for (_, mut session) in sessions.drain() {
             let _ = session.stream.quit().await;
         }
+        drop(sessions);
+        self.sftp_sessions.lock().await.clear();
+    }
+
+    fn is_sftp(conn: &Connection) -> bool {
+        conn.effective_protocol() == Protocol::Sftp
     }
 
     pub async fn connect(&self, conn: Connection) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self.connect_sftp(conn).await;
+        }
+
         let mut log = Vec::new();
         let cancel = Arc::new(AtomicBool::new(false));
         let result = ftp_retry!(self, "connect", conn.id, cancel, async {
@@ -138,6 +153,10 @@ impl FtpSessionManager {
         conn: Connection,
         path: String,
     ) -> FtpResponse<(String, Vec<FtpEntry>)> {
+        if Self::is_sftp(&conn) {
+            return self.list_dir_sftp(conn, path).await;
+        }
+
         let mut log = Vec::new();
         let cancel = Arc::new(AtomicBool::new(false));
         let result = ftp_retry!(self, "list_dir", conn.id, cancel, async {
@@ -163,6 +182,20 @@ impl FtpSessionManager {
         progress: UnboundedSender<u64>,
         limit_kbps: Option<u32>,
     ) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self
+                .upload_stream_sftp(
+                    conn,
+                    local_path,
+                    remote_path,
+                    resume_from,
+                    cancel,
+                    progress,
+                    limit_kbps,
+                )
+                .await;
+        }
+
         let mut log = Vec::new();
         let result = ftp_retry!(self, "upload", conn.id, cancel, async {
             self.ensure_session(&conn, &mut log).await?;
@@ -201,6 +234,21 @@ impl FtpSessionManager {
         progress: UnboundedSender<u64>,
         limit_kbps: Option<u32>,
     ) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self
+                .download_stream_sftp(
+                    conn,
+                    remote_path,
+                    filename,
+                    local_dir,
+                    resume_from,
+                    cancel,
+                    progress,
+                    limit_kbps,
+                )
+                .await;
+        }
+
         let mut log = Vec::new();
         let result = ftp_retry!(self, "download", conn.id, cancel, async {
             self.ensure_session(&conn, &mut log).await?;
@@ -234,6 +282,10 @@ impl FtpSessionManager {
         remote_dir: String,
         name: String,
     ) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self.mkdir_sftp(conn, remote_dir, name).await;
+        }
+
         let mut log = Vec::new();
         let cancel = Arc::new(AtomicBool::new(false));
         let result = ftp_retry!(self, "mkdir", conn.id, cancel, async {
@@ -256,6 +308,10 @@ impl FtpSessionManager {
         old: String,
         new: String,
     ) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self.rename_sftp(conn, remote_dir, old, new).await;
+        }
+
         let mut log = Vec::new();
         let cancel = Arc::new(AtomicBool::new(false));
         let result = ftp_retry!(self, "rename", conn.id, cancel, async {
@@ -284,6 +340,10 @@ impl FtpSessionManager {
         name: String,
         is_dir: bool,
     ) -> FtpResponse<()> {
+        if Self::is_sftp(&conn) {
+            return self.remove_sftp(conn, remote_dir, name, is_dir).await;
+        }
+
         let mut log = Vec::new();
         let cancel = Arc::new(AtomicBool::new(false));
         let result = ftp_retry!(self, "remove", conn.id, cancel, async {
@@ -310,6 +370,8 @@ impl FtpSessionManager {
         if let Some(mut session) = sessions.remove(&id) {
             let _ = session.stream.quit().await;
         }
+        drop(sessions);
+        self.sftp_sessions.lock().await.remove(&id);
     }
 
     async fn open_session(&self, conn: &Connection, log: &mut Vec<String>) -> AppResult<()> {
@@ -714,6 +776,217 @@ impl FtpSessionManager {
     }
 }
 
+impl FtpSessionManager {
+    async fn connect_sftp(&self, conn: Connection) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        log.push(cmd(format!("SFTP CONNECT {}:{}", conn.host, conn.port)));
+        self.invalidate(conn.id).await;
+        match SftpSessionHandle::connect(&conn).await {
+            Ok(handle) => {
+                self.sftp_sessions.lock().await.insert(conn.id, handle);
+                log.push(cmd("SFTP autenticado"));
+                FtpResponse {
+                    result: Ok(()),
+                    log,
+                }
+            }
+            Err(e) => {
+                log.push(format!("< SFTP ERROR: {e}"));
+                FtpResponse {
+                    result: Err(e),
+                    log,
+                }
+            }
+        }
+    }
+
+    async fn ensure_sftp_session(&self, conn: &Connection, log: &mut Vec<String>) -> AppResult<()> {
+        if self.sftp_sessions.lock().await.contains_key(&conn.id) {
+            log.push(cmd("sesión SFTP reutilizada"));
+            return Ok(());
+        }
+        log.push(cmd("reconectando SFTP"));
+        self.invalidate(conn.id).await;
+        let handle = SftpSessionHandle::connect(conn).await?;
+        self.sftp_sessions.lock().await.insert(conn.id, handle);
+        Ok(())
+    }
+
+    async fn list_dir_sftp(
+        &self,
+        conn: Connection,
+        path: String,
+    ) -> FtpResponse<(String, Vec<FtpEntry>)> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let result = ftp_retry!(self, "list_dir_sftp", conn.id, cancel, async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP LIST {path}")));
+            let entries = session.list_dir(&path).await?;
+            Ok((path.clone(), entries))
+        });
+        if let Err(e) = &result {
+            log.push(format!("< SFTP LIST ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_stream_sftp(
+        &self,
+        conn: Connection,
+        local_path: PathBuf,
+        remote_path: String,
+        resume_from: u64,
+        cancel: Arc<AtomicBool>,
+        progress: UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let remote_file = sftp::join_remote(
+            &remote_path,
+            local_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file"),
+        );
+        let result = ftp_retry!(self, "upload_sftp", conn.id, cancel.clone(), async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP PUT {remote_file}")));
+            session
+                .upload(
+                    local_path.clone(),
+                    &remote_file,
+                    resume_from,
+                    &cancel,
+                    &progress,
+                    limit_kbps,
+                )
+                .await
+        });
+        if cancel.load(Ordering::Relaxed) || matches!(&result, Err(AppError::Cancelled)) {
+            log.push(cmd("CANCELLED"));
+            self.invalidate(conn.id).await;
+        } else if let Err(e) = &result {
+            log.push(format!("< SFTP PUT ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn download_stream_sftp(
+        &self,
+        conn: Connection,
+        remote_path: String,
+        filename: String,
+        local_dir: PathBuf,
+        resume_from: u64,
+        cancel: Arc<AtomicBool>,
+        progress: UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let remote_file = sftp::join_remote(&remote_path, &filename);
+        let result = ftp_retry!(self, "download_sftp", conn.id, cancel.clone(), async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP GET {remote_file}")));
+            session
+                .download(
+                    &remote_file,
+                    local_dir.as_path(),
+                    &filename,
+                    resume_from,
+                    &cancel,
+                    &progress,
+                    limit_kbps,
+                )
+                .await
+        });
+        if cancel.load(Ordering::Relaxed) || matches!(&result, Err(AppError::Cancelled)) {
+            log.push(cmd("CANCELLED"));
+            self.invalidate(conn.id).await;
+        } else if let Err(e) = &result {
+            log.push(format!("< SFTP GET ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+
+    async fn mkdir_sftp(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        name: String,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let path = sftp::join_remote(&remote_dir, &name);
+        let result = ftp_retry!(self, "mkdir_sftp", conn.id, cancel, async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP MKDIR {path}")));
+            session.mkdir(&path).await
+        });
+        if let Err(e) = &result {
+            log.push(format!("< SFTP MKDIR ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+
+    async fn rename_sftp(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        old: String,
+        new: String,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let from = sftp::join_remote(&remote_dir, &old);
+        let to = sftp::join_remote(&remote_dir, &new);
+        let result = ftp_retry!(self, "rename_sftp", conn.id, cancel, async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP RENAME {from} → {to}")));
+            session.rename(&from, &to).await
+        });
+        if let Err(e) = &result {
+            log.push(format!("< SFTP RENAME ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+
+    async fn remove_sftp(
+        &self,
+        conn: Connection,
+        remote_dir: String,
+        name: String,
+        is_dir: bool,
+    ) -> FtpResponse<()> {
+        let mut log = Vec::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let path = sftp::join_remote(&remote_dir, &name);
+        let result = ftp_retry!(self, "remove_sftp", conn.id, cancel, async {
+            self.ensure_sftp_session(&conn, &mut log).await?;
+            let mut sessions = self.sftp_sessions.lock().await;
+            let session = sessions.get_mut(&conn.id).ok_or(AppError::NoConnection)?;
+            log.push(cmd(format!("SFTP DELETE {path}")));
+            session.remove(&path, is_dir).await
+        });
+        if let Err(e) = &result {
+            log.push(format!("< SFTP DELETE ERROR: {e}"));
+        }
+        FtpResponse { result, log }
+    }
+}
+
 async fn establish_connection(
     conn: &Connection,
     log: &mut Vec<String>,
@@ -724,7 +997,7 @@ async fn establish_connection(
     let mut stream =
         with_timeout(CONNECT_TIMEOUT, async { connect_with_timeout(&addr).await }).await?;
 
-    if conn.security == FtpSecurity::Explicit {
+    if conn.effective_protocol() == Protocol::FtpsExplicit {
         log.push(cmd("AUTH TLS"));
         let connector = tls::build_tls_connector(conn.accept_invalid_certs)?;
         stream = with_timeout(OPERATION_TIMEOUT, async {

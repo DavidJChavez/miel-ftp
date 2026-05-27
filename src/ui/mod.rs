@@ -7,6 +7,8 @@ pub mod prompt_modal;
 pub mod settings_modal;
 pub mod sidebar;
 pub mod status_bar;
+pub mod sync_panel;
 pub mod theme;
+pub mod toast_overlay;
 pub mod transfer_bar;
 pub mod transfer_queue_panel;

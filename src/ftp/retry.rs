@@ -35,6 +35,7 @@ pub fn is_retryable(err: &AppError) -> bool {
         | AppError::Keyring(_)
         | AppError::Json(_)
         | AppError::NoConnection
+        | AppError::Connection(_)
         | AppError::Cancelled => false,
     }
 }

@@ -4,7 +4,12 @@ use uuid::Uuid;
 
 use crate::error::AppErrorMsg;
 use crate::models::{
-    ftp_entry::FtpEntry, ftp_task::FtpTaskResult, panel::PanelKind, sort::SortKey,
+    connection::Protocol,
+    ftp_entry::FtpEntry,
+    ftp_task::FtpTaskResult,
+    panel::PanelKind,
+    sort::SortKey,
+    sync::{SyncAction, SyncEntry},
 };
 
 #[derive(Debug, Clone)]
@@ -19,12 +24,25 @@ pub enum Message {
     ConnectionFormUsernameChanged(String),
     ConnectionFormPasswordChanged(String),
     ConnectionFormModeChanged(bool),
-    ConnectionFormUseFtpsChanged(bool),
+    ConnectionFormProtocolChanged(Protocol),
     ConnectionFormAcceptInvalidCertsChanged(bool),
     ConnectionFormSave,
     ConnectionFormCancel,
     ConnectionFormDelete,
     ConnectionDeleted,
+
+    // Quickconnect
+    ToggleQuickconnect,
+    QuickconnectHostChanged(String),
+    QuickconnectPortChanged(String),
+    QuickconnectUsernameChanged(String),
+    QuickconnectPasswordChanged(String),
+    QuickconnectConnect,
+
+    // Bookmarks
+    BookmarkAdd,
+    BookmarkRemove(String),
+    BookmarkNavigate(String),
 
     // FTP Connection
     ConnectPressed,
@@ -61,6 +79,8 @@ pub enum Message {
         target: String,
     },
     ContextMenuClosed,
+    EditRemoteFile(String),
+    ReuploadRemoteEdit(PathBuf),
 
     // Selection
     LocalFileSelected {
@@ -118,6 +138,27 @@ pub enum Message {
     SettingsCustomRemoved(String),
     SettingsCustomDraftChanged(String),
     SettingsBandwidthDraftChanged(String),
+    SettingsMaxConcurrentChanged(String),
+
+    // Sync panel
+    OpenSyncPanel,
+    CloseSyncPanel,
+    SyncAnalyzeResult(Vec<SyncEntry>),
+    SyncEntryActionChanged(String, SyncAction),
+    SyncApply,
+
+    // Remote edit
+    RemoteEditDownloaded {
+        temp_path: PathBuf,
+        remote_dir: String,
+        filename: String,
+    },
+    RemoteEditFailed(AppErrorMsg),
+    RemoteEditUploaded(PathBuf),
+
+    // Toasts
+    ToastTick,
+    DismissToast(Uuid),
 
     // Drag & drop
     FileDropped(PathBuf),

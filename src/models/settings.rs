@@ -53,6 +53,10 @@ impl Bandwidth {
     }
 }
 
+fn default_max_concurrent() -> u8 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppSettings {
     #[serde(default = "default_hide_system_files")]
@@ -63,6 +67,8 @@ pub struct AppSettings {
     pub custom_hidden: Vec<String>,
     #[serde(default)]
     pub bandwidth: Bandwidth,
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: u8,
 }
 
 fn default_hide_system_files() -> bool {
@@ -76,7 +82,22 @@ impl Default for AppSettings {
             show_dotfiles: false,
             custom_hidden: Vec::new(),
             bandwidth: Bandwidth::Unlimited,
+            max_concurrent: 1,
         }
+    }
+}
+
+impl AppSettings {
+    pub fn max_concurrent_clamped(&self) -> u8 {
+        self.max_concurrent.clamp(1, 5)
+    }
+
+    pub fn from_max_concurrent_input(input: &str) -> Option<u8> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Some(1);
+        }
+        trimmed.parse::<u8>().ok().map(|n| n.clamp(1, 5))
     }
 }
 
@@ -112,6 +133,7 @@ mod tests {
             show_dotfiles: false,
             custom_hidden: vec![],
             bandwidth: Bandwidth::Unlimited,
+            max_concurrent: 1,
         };
         assert!(is_hidden(".env", &s));
         assert!(!is_hidden("file.txt", &s));
@@ -124,6 +146,7 @@ mod tests {
             show_dotfiles: true,
             custom_hidden: vec![],
             bandwidth: Bandwidth::Unlimited,
+            max_concurrent: 1,
         };
         assert!(!is_hidden(".env", &s));
     }
@@ -135,6 +158,7 @@ mod tests {
             show_dotfiles: true,
             custom_hidden: vec![],
             bandwidth: Bandwidth::Unlimited,
+            max_concurrent: 1,
         };
         assert!(is_hidden(".DS_Store", &s));
         assert!(!is_hidden(".env", &s));
@@ -147,6 +171,7 @@ mod tests {
             show_dotfiles: true,
             custom_hidden: vec!["backup.tmp".into()],
             bandwidth: Bandwidth::Unlimited,
+            max_concurrent: 1,
         };
         assert!(is_hidden("backup.tmp", &s));
         assert!(!is_hidden("other.tmp", &s));
