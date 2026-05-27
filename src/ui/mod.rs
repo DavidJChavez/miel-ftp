@@ -4,6 +4,7 @@ pub mod file_panel;
 pub mod ftp_log_panel;
 pub mod icons;
 pub mod prompt_modal;
+pub mod settings_modal;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;

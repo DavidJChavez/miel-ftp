@@ -10,6 +10,7 @@ use crate::models::{
     ftp_entry::FtpEntry,
     message::Message,
     panel::PanelKind,
+    settings::AppSettings,
     sort::{SortKey, SortSpec, apply_view},
 };
 use crate::ui::icons;
@@ -28,6 +29,7 @@ pub fn file_panel<'a>(
     sort: SortSpec,
     filter: &'a str,
     drop_hover: bool,
+    settings: &AppSettings,
 ) -> Element<'a, Message> {
     let (panel_icon, label, label_color) = match kind {
         PanelKind::Local => (icons::computer(14), "local", TEXT_MUTED),
@@ -156,26 +158,25 @@ pub fn file_panel<'a>(
         ..container::Style::default()
     });
 
-    let visible = apply_view(entries, sort, filter);
+    let visible = apply_view(entries, sort, filter, settings);
 
     let file_rows: Vec<Element<Message>> = if visible.is_empty() {
+        let empty_msg = if !entries.is_empty() && filter.trim().is_empty() {
+            "Sin elementos (filtros activos)"
+        } else if is_connected || matches!(kind, PanelKind::Local) {
+            if filter.trim().is_empty() {
+                "Carpeta vacía"
+            } else {
+                "Sin coincidencias"
+            }
+        } else {
+            "Sin conexión"
+        };
         vec![
-            container(
-                text(if is_connected || matches!(kind, PanelKind::Local) {
-                    if filter.trim().is_empty() {
-                        "Carpeta vacía"
-                    } else {
-                        "Sin coincidencias"
-                    }
-                } else {
-                    "Sin conexión"
-                })
-                .size(12)
-                .color(TEXT_DIM),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .into(),
+            container(text(empty_msg).size(12).color(TEXT_DIM))
+                .padding(20)
+                .width(Length::Fill)
+                .into(),
         ]
     } else {
         visible

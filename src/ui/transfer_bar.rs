@@ -6,6 +6,7 @@ use iced::{
 use crate::models::{message::Message, transfer::TransferEntry};
 use crate::ui::ftp_log_panel::ftp_log_toggle_btn;
 use crate::ui::icons;
+use crate::ui::settings_modal::settings_toggle_btn;
 use crate::ui::theme::{ACCENT, BG_SURFACE, BORDER_SUBTLE, TEXT_DIM, TEXT_MUTED};
 
 pub fn transfer_bar(
@@ -13,6 +14,7 @@ pub fn transfer_bar(
     queued_count: usize,
     queue_visible: bool,
     ftp_log_visible: bool,
+    settings_modal_open: bool,
 ) -> Element<'_, Message> {
     let status = match active {
         None => row![text("Sin transferencias activas").size(11).color(TEXT_DIM),]
@@ -76,6 +78,7 @@ pub fn transfer_bar(
 
     let content = row![
         ftp_log_toggle_btn(ftp_log_visible),
+        settings_toggle_btn(settings_modal_open),
         queue_toggle_btn(&queue_label, queue_color, queue_visible),
         status,
     ]

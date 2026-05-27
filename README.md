@@ -91,7 +91,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Breadcrumbs clickables | ✅ |
 | Ordenar por columnas (nombre / tamaño / fecha) | ✅ |
 | Filtro / búsqueda en carpeta | ✅ |
-| Filtros globales (ocultar `.DS_Store`, etc.) | ⬜ |
+| Filtros globales (ocultar `.DS_Store`, etc.) | ✅ |
 | Selección múltiple | ✅ |
 | Menú contextual (rename, delete, mkdir, …) | ✅ |
 | Atajos de teclado | ✅ |

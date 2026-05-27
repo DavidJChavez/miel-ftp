@@ -12,6 +12,7 @@ use crate::models::{
     ftp_log::FtpLog,
     panel::PanelKind,
     prompt::PromptDialog,
+    settings::AppSettings,
     sort::SortSpec,
     transfer::{TransferEntry, TransferStatus},
 };
@@ -54,6 +55,11 @@ pub struct State {
 
     // UI feedback
     pub status_message: Option<String>,
+
+    // Preferencias globales
+    pub settings: AppSettings,
+    pub settings_modal_open: bool,
+    pub settings_custom_draft: String,
 
     // FTP log (oculto por defecto)
     pub ftp_log: FtpLog,

@@ -5,7 +5,9 @@ use iced::{
     widget::{container, row, text},
 };
 
-use crate::models::{ftp_entry::FtpEntry, message::Message, panel::PanelKind, sort::SortSpec};
+use crate::models::{
+    ftp_entry::FtpEntry, message::Message, panel::PanelKind, settings::AppSettings, sort::SortSpec,
+};
 use crate::ui::theme::{BG_SURFACE, BORDER_SUBTLE, TEXT_MUTED};
 use crate::ui::transfer_bar::format_bytes;
 
@@ -15,8 +17,9 @@ pub fn status_bar(
     selected: &HashSet<String>,
     sort: SortSpec,
     filter: &str,
+    settings: &AppSettings,
 ) -> Element<'static, Message> {
-    let visible = crate::models::sort::apply_view(entries, sort, filter);
+    let visible = crate::models::sort::apply_view(entries, sort, filter, settings);
     let total = visible.len();
     let selected_count = selected.len();
 

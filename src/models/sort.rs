@@ -1,4 +1,5 @@
 use crate::models::ftp_entry::FtpEntry;
+use crate::models::settings::{AppSettings, is_hidden};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortKey {
@@ -40,10 +41,16 @@ impl SortSpec {
     }
 }
 
-pub fn apply_view<'a>(entries: &'a [FtpEntry], sort: SortSpec, filter: &str) -> Vec<&'a FtpEntry> {
+pub fn apply_view<'a>(
+    entries: &'a [FtpEntry],
+    sort: SortSpec,
+    filter: &str,
+    settings: &AppSettings,
+) -> Vec<&'a FtpEntry> {
     let filter_lower = filter.trim().to_lowercase();
     let mut visible: Vec<&FtpEntry> = entries
         .iter()
+        .filter(|e| !is_hidden(&e.name, settings))
         .filter(|e| filter_lower.is_empty() || e.name.to_lowercase().contains(&filter_lower))
         .collect();
 
@@ -91,7 +98,7 @@ mod tests {
             entry("file.txt", false, Some(10)),
             entry("folder", true, None),
         ];
-        let result = apply_view(&entries, SortSpec::default(), "");
+        let result = apply_view(&entries, SortSpec::default(), "", &AppSettings::default());
         assert!(result[0].is_dir);
         assert!(!result[1].is_dir);
     }
@@ -102,7 +109,12 @@ mod tests {
             entry("Alpha.txt", false, Some(1)),
             entry("beta.txt", false, Some(2)),
         ];
-        let result = apply_view(&entries, SortSpec::default(), "ALPHA");
+        let result = apply_view(
+            &entries,
+            SortSpec::default(),
+            "ALPHA",
+            &AppSettings::default(),
+        );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "Alpha.txt");
     }
@@ -121,9 +133,22 @@ mod tests {
                 order: SortOrder::Desc,
             },
             "",
+            &AppSettings::default(),
         );
         assert_eq!(result[0].name, "b.txt");
         assert_eq!(result[1].name, "c.txt");
         assert_eq!(result[2].name, "a.txt");
+    }
+
+    #[test]
+    fn hides_system_files_when_enabled() {
+        let entries = vec![
+            entry(".DS_Store", false, Some(1)),
+            entry("visible.txt", false, Some(2)),
+        ];
+        let settings = AppSettings::default();
+        let result = apply_view(&entries, SortSpec::default(), "", &settings);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "visible.txt");
     }
 }

@@ -11,7 +11,7 @@ use iced::stream;
 use iced::widget::stack;
 use uuid::Uuid;
 
-use crate::config::{load_connections, save_connections};
+use crate::config::{load_connections, load_settings, save_connections, save_settings};
 use crate::error::{AppError, AppErrorMsg};
 use crate::ftp::{self, FtpSessionManager};
 use crate::models::{
@@ -37,6 +37,11 @@ pub fn boot() -> (State, Task<Message>) {
     let connections = load_connections().unwrap_or_else(|e| {
         warn!(error = %e, "no se pudieron cargar las conexiones guardadas");
         Vec::new()
+    });
+
+    let settings = load_settings().unwrap_or_else(|e| {
+        warn!(error = %e, "no se pudieron cargar las preferencias");
+        crate::models::settings::AppSettings::default()
     });
 
     let home = dirs::home_dir()
@@ -71,6 +76,9 @@ pub fn boot() -> (State, Task<Message>) {
         transfers: vec![],
         queue_panel_visible: false,
         status_message: None,
+        settings,
+        settings_modal_open: false,
+        settings_custom_draft: String::new(),
         ftp_log: FtpLog::default(),
         ftp_manager: FtpSessionManager::new(),
     };
@@ -753,6 +761,50 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ToggleSettingsModal => {
+            state.settings_modal_open = !state.settings_modal_open;
+            if !state.settings_modal_open {
+                state.settings_custom_draft.clear();
+            }
+            Task::none()
+        }
+
+        Message::SettingsHideSystemToggled(v) => {
+            state.settings.hide_system_files = v;
+            persist_settings(state);
+            Task::none()
+        }
+
+        Message::SettingsShowDotfilesToggled(v) => {
+            state.settings.show_dotfiles = v;
+            persist_settings(state);
+            Task::none()
+        }
+
+        Message::SettingsCustomDraftChanged(v) => {
+            state.settings_custom_draft = v;
+            Task::none()
+        }
+
+        Message::SettingsCustomAdded(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Task::none();
+            }
+            if !state.settings.custom_hidden.contains(&name) {
+                state.settings.custom_hidden.push(name);
+                persist_settings(state);
+            }
+            state.settings_custom_draft.clear();
+            Task::none()
+        }
+
+        Message::SettingsCustomRemoved(name) => {
+            state.settings.custom_hidden.retain(|n| n != &name);
+            persist_settings(state);
+            Task::none()
+        }
+
         Message::FilesHoverEntered => {
             state.drop_hover = true;
             Task::none()
@@ -776,6 +828,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     use crate::ui::file_panel::file_panel;
     use crate::ui::ftp_log_panel::ftp_log_panel;
     use crate::ui::prompt_modal::prompt_modal;
+    use crate::ui::settings_modal::settings_modal;
     use crate::ui::status_bar::status_bar;
     use crate::ui::transfer_queue_panel::transfer_queue_panel;
     use iced::widget::{column, container, row, text};
@@ -807,6 +860,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.sort_local,
             &state.filter_local,
             false,
+            &state.settings,
         ),
         divider(crate::ui::theme::BORDER_SUBTLE),
         file_panel(
@@ -818,6 +872,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.sort_remote,
             &state.filter_remote,
             state.drop_hover,
+            &state.settings,
         ),
     ]
     .height(Length::Fill);
@@ -834,6 +889,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             PanelKind::Local => &state.filter_local,
             PanelKind::Remote => &state.filter_remote,
         },
+        &state.settings,
     );
 
     let transfer = crate::ui::transfer_bar::transfer_bar(
@@ -841,6 +897,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         state.queued_count(),
         state.queue_panel_visible,
         state.ftp_log.is_visible(),
+        state.settings_modal_open,
     );
 
     let mut footer = column![];
@@ -876,6 +933,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     if let Some(menu) = &state.context_menu {
         base = stack![base, context_menu_overlay(menu),].into();
+    }
+
+    if state.settings_modal_open {
+        base = stack![
+            base,
+            settings_modal(&state.settings, &state.settings_custom_draft),
+        ]
+        .into();
     }
 
     base
@@ -934,6 +999,14 @@ fn window_event(
 }
 
 fn handle_keypress(state: &mut State, key: Key, modifiers: Modifiers) -> Task<Message> {
+    if state.settings_modal_open {
+        if matches!(key, Key::Named(key::Named::Escape)) {
+            state.settings_modal_open = false;
+            state.settings_custom_draft.clear();
+        }
+        return Task::none();
+    }
+
     if state.prompt.is_some() {
         if matches!(key, Key::Named(key::Named::Escape)) {
             state.prompt = None;
@@ -1093,7 +1166,7 @@ fn handle_file_selection(
         ),
     };
 
-    let visible = apply_view(entries, sort, filter);
+    let visible = apply_view(entries, sort, filter, &state.settings);
     let names: Vec<String> = visible.iter().map(|e| e.name.clone()).collect();
 
     let selected = match panel {
@@ -1547,6 +1620,12 @@ fn join_remote_path(base: &str, name: &str) -> String {
 fn apply_ftp_log(state: &mut State, lines: &[String]) {
     for line in lines {
         state.ftp_log.push(line.clone());
+    }
+}
+
+fn persist_settings(state: &mut State) {
+    if let Err(e) = save_settings(&state.settings) {
+        state.status_message = Some(format!("Error al guardar preferencias: {e}"));
     }
 }
 

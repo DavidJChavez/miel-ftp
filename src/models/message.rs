@@ -107,6 +107,14 @@ pub enum Message {
     ToggleFtpLog,
     ClearFtpLog,
 
+    // Filtros globales
+    ToggleSettingsModal,
+    SettingsHideSystemToggled(bool),
+    SettingsShowDotfilesToggled(bool),
+    SettingsCustomAdded(String),
+    SettingsCustomRemoved(String),
+    SettingsCustomDraftChanged(String),
+
     // Drag & drop
     FileDropped(PathBuf),
     FilesHoverEntered,

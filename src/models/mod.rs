@@ -7,6 +7,7 @@ pub mod ftp_task;
 pub mod message;
 pub mod panel;
 pub mod prompt;
+pub mod settings;
 pub mod sort;
 pub mod state;
 pub mod transfer;
