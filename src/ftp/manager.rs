@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::channel::mpsc::UnboundedSender;
 use futures::{AsyncReadExt, AsyncWriteExt};
-use suppaftp::AsyncFtpStream;
+use suppaftp::AsyncNativeTlsFtpStream;
+use suppaftp::types::Mode as FtpDataMode;
 use tokio::io::{
     AsyncReadExt as TokioAsyncReadExt, AsyncSeekExt, AsyncWriteExt as TokioAsyncWriteExt,
 };
@@ -17,7 +18,12 @@ use crate::error::{AppError, AppResult};
 use crate::ftp::client::FtpResponse;
 use crate::ftp::config::{self, CHUNK_SIZE, CONNECT_TIMEOUT, OPERATION_TIMEOUT};
 use crate::ftp::retry::{is_retryable, with_timeout};
-use crate::models::{connection::Connection, ftp_entry::FtpEntry};
+use crate::ftp::throttle;
+use crate::ftp::tls;
+use crate::models::{
+    connection::{Connection, FtpMode, FtpSecurity},
+    ftp_entry::FtpEntry,
+};
 
 fn cmd(line: impl AsRef<str>) -> String {
     format!("> {}", line.as_ref())
@@ -71,10 +77,10 @@ macro_rules! ftp_retry {
 }
 
 struct ActiveSession {
-    stream: AsyncFtpStream,
+    stream: AsyncNativeTlsFtpStream,
 }
 
-/// Gestor de sesiones FTP: un `AsyncFtpStream` vivo por `connection.id`.
+/// Gestor de sesiones FTP: un stream vivo por `connection.id`.
 #[derive(Clone)]
 pub struct FtpSessionManager {
     sessions: Arc<Mutex<HashMap<Uuid, ActiveSession>>>,
@@ -146,6 +152,7 @@ impl FtpSessionManager {
         FtpResponse { result, log }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload_stream(
         &self,
         conn: Connection,
@@ -154,6 +161,7 @@ impl FtpSessionManager {
         resume_from: u64,
         cancel: Arc<AtomicBool>,
         progress: UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
     ) -> FtpResponse<()> {
         let mut log = Vec::new();
         let result = ftp_retry!(self, "upload", conn.id, cancel, async {
@@ -165,6 +173,7 @@ impl FtpSessionManager {
                 resume_from,
                 &cancel,
                 &progress,
+                limit_kbps,
                 &mut log,
             )
             .await
@@ -190,6 +199,7 @@ impl FtpSessionManager {
         resume_from: u64,
         cancel: Arc<AtomicBool>,
         progress: UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
     ) -> FtpResponse<()> {
         let mut log = Vec::new();
         let result = ftp_retry!(self, "download", conn.id, cancel, async {
@@ -202,6 +212,7 @@ impl FtpSessionManager {
                 resume_from,
                 &cancel,
                 &progress,
+                limit_kbps,
                 &mut log,
             )
             .await
@@ -470,6 +481,7 @@ impl FtpSessionManager {
         resume_from: u64,
         cancel: &Arc<AtomicBool>,
         progress: &UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
         log: &mut Vec<String>,
     ) -> AppResult<()> {
         let filename = local_path
@@ -562,6 +574,7 @@ impl FtpSessionManager {
 
                 transferred += n as u64;
                 let _ = progress.unbounded_send(transferred);
+                throttle::sleep_for_bytes(n as u64, limit_kbps).await;
             }
             Ok(data_stream)
         }
@@ -597,6 +610,7 @@ impl FtpSessionManager {
         resume_from: u64,
         cancel: &Arc<AtomicBool>,
         progress: &UnboundedSender<u64>,
+        limit_kbps: Option<u32>,
         log: &mut Vec<String>,
     ) -> AppResult<()> {
         let dest = local_dir.join(filename);
@@ -673,6 +687,7 @@ impl FtpSessionManager {
                 file.write_all(&buf[..n]).await.map_err(AppError::from)?;
                 transferred += n as u64;
                 let _ = progress.unbounded_send(transferred);
+                throttle::sleep_for_bytes(n as u64, limit_kbps).await;
             }
             Ok(data_stream)
         }
@@ -702,12 +717,26 @@ impl FtpSessionManager {
 async fn establish_connection(
     conn: &Connection,
     log: &mut Vec<String>,
-) -> AppResult<AsyncFtpStream> {
+) -> AppResult<AsyncNativeTlsFtpStream> {
     let addr = format!("{}:{}", conn.host, conn.port);
     log.push(cmd(format!("CONNECT {addr}")));
 
     let mut stream =
         with_timeout(CONNECT_TIMEOUT, async { connect_with_timeout(&addr).await }).await?;
+
+    if conn.security == FtpSecurity::Explicit {
+        log.push(cmd("AUTH TLS"));
+        let connector = tls::build_tls_connector(conn.accept_invalid_certs)?;
+        stream = with_timeout(OPERATION_TIMEOUT, async {
+            stream
+                .into_secure(connector, conn.host.as_str())
+                .await
+                .map_err(AppError::from)
+        })
+        .await?;
+        log.push(cmd("PBSZ 0"));
+        log.push(cmd("PROT P"));
+    }
 
     log.push(cmd(format!("USER {}", conn.username)));
     with_timeout(OPERATION_TIMEOUT, async {
@@ -718,10 +747,17 @@ async fn establish_connection(
     })
     .await?;
 
+    let data_mode = match conn.mode {
+        FtpMode::Passive => FtpDataMode::Passive,
+        FtpMode::Active => FtpDataMode::Active,
+    };
+    log.push(cmd(format!("MODE {}", conn.mode.label())));
+    stream.set_mode(data_mode);
+
     Ok(stream)
 }
 
-async fn connect_with_timeout(addr: &str) -> AppResult<AsyncFtpStream> {
+async fn connect_with_timeout(addr: &str) -> AppResult<AsyncNativeTlsFtpStream> {
     let mut addrs = tokio::net::lookup_host(addr)
         .await
         .map_err(AppError::from)?;
@@ -730,7 +766,7 @@ async fn connect_with_timeout(addr: &str) -> AppResult<AsyncFtpStream> {
         .next()
         .ok_or_else(|| AppError::Validation(format!("no se pudo resolver el host: {addr}")))?;
 
-    AsyncFtpStream::connect_timeout(socket_addr, CONNECT_TIMEOUT)
+    AsyncNativeTlsFtpStream::connect_timeout(socket_addr, CONNECT_TIMEOUT)
         .await
         .map_err(AppError::from)
 }

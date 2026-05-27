@@ -46,6 +46,7 @@ mod tests {
             hide_system_files: false,
             show_dotfiles: true,
             custom_hidden: vec!["foo.bar".into()],
+            bandwidth: crate::models::settings::Bandwidth::KBps(512),
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -60,5 +61,9 @@ mod tests {
         assert!(parsed.hide_system_files);
         assert!(parsed.show_dotfiles);
         assert!(parsed.custom_hidden.is_empty());
+        assert_eq!(
+            parsed.bandwidth,
+            crate::models::settings::Bandwidth::Unlimited
+        );
     }
 }

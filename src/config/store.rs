@@ -60,7 +60,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::models::connection::Connection;
+    use crate::models::connection::{Connection, FtpMode, FtpSecurity};
 
     #[test]
     fn connection_record_round_trip_json() {
@@ -70,6 +70,9 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 2121,
             username: "user".into(),
+            mode: FtpMode::Passive,
+            security: FtpSecurity::Plain,
+            accept_invalid_certs: false,
         };
 
         let json = serde_json::to_string(&record).unwrap();
@@ -86,6 +89,9 @@ mod tests {
             21,
             "user".into(),
             SecretString::from("pass".to_string()),
+            FtpMode::Passive,
+            FtpSecurity::Plain,
+            false,
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }

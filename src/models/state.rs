@@ -60,6 +60,7 @@ pub struct State {
     pub settings: AppSettings,
     pub settings_modal_open: bool,
     pub settings_custom_draft: String,
+    pub settings_bandwidth_draft: String,
 
     // FTP log (oculto por defecto)
     pub ftp_log: FtpLog,

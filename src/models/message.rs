@@ -18,6 +18,9 @@ pub enum Message {
     ConnectionFormPortChanged(String),
     ConnectionFormUsernameChanged(String),
     ConnectionFormPasswordChanged(String),
+    ConnectionFormModeChanged(bool),
+    ConnectionFormUseFtpsChanged(bool),
+    ConnectionFormAcceptInvalidCertsChanged(bool),
     ConnectionFormSave,
     ConnectionFormCancel,
     ConnectionFormDelete,
@@ -114,6 +117,7 @@ pub enum Message {
     SettingsCustomAdded(String),
     SettingsCustomRemoved(String),
     SettingsCustomDraftChanged(String),
+    SettingsBandwidthDraftChanged(String),
 
     // Drag & drop
     FileDropped(PathBuf),

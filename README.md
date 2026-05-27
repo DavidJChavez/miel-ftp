@@ -74,9 +74,9 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Persistencia `sites.json` (escritura atómica) | ✅ |
 | Contraseñas en keyring (`secrecy`) | ✅ |
 | Quickconnect bar | ⬜ |
-| FTPS (TLS explícito) | ⬜ |
+| FTPS (TLS explícito) | ✅ |
 | SFTP | ⬜ |
-| Modo FTP activo / pasivo configurable | ⬜ |
+| Modo FTP activo / pasivo configurable | ✅ |
 | Bookmarks por sitio | ⬜ |
 
 ### Navegación de archivos
@@ -112,7 +112,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | Transferencias concurrentes | ⬜ |
 | Cancelar / reintentar | ✅ |
 | Resume interrumpido (`REST`) | ✅ |
-| Throttling de ancho de banda | ⬜ |
+| Throttling de ancho de banda | ✅ |
 | Edición remota (temp + re-subida) | ⬜ |
 
 ### UI, UX y depuración
@@ -146,7 +146,7 @@ Leyenda: ✅ hecho · 🟡 parcial · ⬜ pendiente
 | **1** | Bases sólidas, Site Manager, deuda técnica, log FTP opcional | ✅ |
 | **2** | Sesión persistente, streaming, cola y progreso real | ✅ |
 | **3** | Paridad UX FileZilla (D&D, multi-select, breadcrumbs, …) | ✅ |
-| **4** | FTPS/SFTP, sync, edición remota, throttling | ⬜ |
+| **4** | FTPS/SFTP, sync, edición remota, throttling | 🟡 |
 
 ## Licencia
 

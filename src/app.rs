@@ -79,6 +79,7 @@ pub fn boot() -> (State, Task<Message>) {
         settings,
         settings_modal_open: false,
         settings_custom_draft: String::new(),
+        settings_bandwidth_draft: String::new(),
         ftp_log: FtpLog::default(),
         ftp_manager: FtpSessionManager::new(),
     };
@@ -123,6 +124,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 conn.port,
                 &conn.username,
                 conn.password(),
+                conn.mode,
+                conn.security,
+                conn.accept_invalid_certs,
             ));
             Task::none()
         }
@@ -163,6 +167,33 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ConnectionFormModeChanged(v) => {
+            if let Some(form) = &mut state.connection_form {
+                form.active_mode = v;
+                form.error = None;
+            }
+            Task::none()
+        }
+
+        Message::ConnectionFormUseFtpsChanged(v) => {
+            if let Some(form) = &mut state.connection_form {
+                form.use_ftps = v;
+                if !v {
+                    form.accept_invalid_certs = false;
+                }
+                form.error = None;
+            }
+            Task::none()
+        }
+
+        Message::ConnectionFormAcceptInvalidCertsChanged(v) => {
+            if let Some(form) = &mut state.connection_form {
+                form.accept_invalid_certs = v;
+                form.error = None;
+            }
+            Task::none()
+        }
+
         Message::ConnectionFormCancel => {
             state.connection_form = None;
             Task::none()
@@ -196,6 +227,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 port,
                 username,
                 SecretString::from(password),
+                form.ftp_mode(),
+                form.ftp_security(),
+                form.accept_invalid_certs,
             ) {
                 Ok(conn) => {
                     if let Some(id) = form.editing_id {
@@ -763,8 +797,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ToggleSettingsModal => {
             state.settings_modal_open = !state.settings_modal_open;
-            if !state.settings_modal_open {
+            if state.settings_modal_open {
+                state.settings_bandwidth_draft = state.settings.bandwidth.display_value();
+            } else {
                 state.settings_custom_draft.clear();
+                state.settings_bandwidth_draft.clear();
             }
             Task::none()
         }
@@ -802,6 +839,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SettingsCustomRemoved(name) => {
             state.settings.custom_hidden.retain(|n| n != &name);
             persist_settings(state);
+            Task::none()
+        }
+
+        Message::SettingsBandwidthDraftChanged(v) => {
+            state.settings_bandwidth_draft = v.clone();
+            if let Some(bandwidth) = crate::models::settings::Bandwidth::from_kbps_input(&v) {
+                state.settings.bandwidth = bandwidth;
+                persist_settings(state);
+            }
             Task::none()
         }
 
@@ -938,7 +984,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     if state.settings_modal_open {
         base = stack![
             base,
-            settings_modal(&state.settings, &state.settings_custom_draft),
+            settings_modal(
+                &state.settings,
+                &state.settings_custom_draft,
+                &state.settings_bandwidth_draft,
+            ),
         ]
         .into();
     }
@@ -1003,6 +1053,7 @@ fn handle_keypress(state: &mut State, key: Key, modifiers: Modifiers) -> Task<Me
         if matches!(key, Key::Named(key::Named::Escape)) {
             state.settings_modal_open = false;
             state.settings_custom_draft.clear();
+            state.settings_bandwidth_draft.clear();
         }
         return Task::none();
     }
@@ -1510,13 +1561,16 @@ fn start_next_transfer_if_idle(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
-    Task::stream(transfer_stream(entry, conn, mgr))
+    let bandwidth = state.settings.bandwidth.limit_kbps();
+
+    Task::stream(transfer_stream(entry, conn, mgr, bandwidth))
 }
 
 fn transfer_stream(
     entry: TransferEntry,
     conn: Connection,
     mgr: FtpSessionManager,
+    limit_kbps: Option<u32>,
 ) -> impl Stream<Item = Message> {
     stream::channel(32, async move |mut output| {
         let (progress_tx, mut progress_rx) = mpsc::unbounded::<u64>();
@@ -1533,6 +1587,7 @@ fn transfer_stream(
                         entry.resume_from,
                         entry.cancel.clone(),
                         progress_tx,
+                        limit_kbps,
                     )
                     .await
                 }
@@ -1550,6 +1605,7 @@ fn transfer_stream(
                         entry.resume_from,
                         entry.cancel.clone(),
                         progress_tx,
+                        limit_kbps,
                     )
                     .await
                 }

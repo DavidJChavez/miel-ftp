@@ -11,6 +11,7 @@ use crate::ui::theme::{
 pub fn settings_modal<'a>(
     settings: &'a AppSettings,
     custom_draft: &'a str,
+    bandwidth_draft: &'a str,
 ) -> Element<'a, Message> {
     let hide_system = checkbox(settings.hide_system_files)
         .label("Ocultar archivos del sistema")
@@ -74,7 +75,8 @@ pub fn settings_modal<'a>(
     .align_y(Alignment::Center);
 
     let card_body = column![
-        text("Filtros globales").size(15).color(TEXT_PRIMARY),
+        text("Preferencias").size(15).color(TEXT_PRIMARY),
+        text("Filtros globales").size(12).color(TEXT_MUTED),
         text("Oculta entradas en ambos paneles sin volver a listar.")
             .size(11)
             .color(TEXT_DIM),
@@ -85,6 +87,19 @@ pub fn settings_modal<'a>(
             .color(TEXT_DIM),
         scrollable(custom_list).height(Length::Fixed(80.0)),
         add_row,
+        text("Transferencias").size(12).color(TEXT_MUTED),
+        column![
+            text("Límite de ancho de banda (KB/s, 0 = sin límite)")
+                .size(11)
+                .color(TEXT_DIM),
+            text_input("0", bandwidth_draft)
+                .on_input(Message::SettingsBandwidthDraftChanged)
+                .padding([6, 8])
+                .size(12)
+                .width(Length::Fill)
+                .style(text_input_style),
+        ]
+        .spacing(4),
         row![
             iced::widget::Space::new().width(Length::Fill),
             button(text("Cerrar").size(12).color(TEXT_MUTED))

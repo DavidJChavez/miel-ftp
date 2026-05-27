@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Border, Element, Length, Padding,
-    widget::{button, column, container, row, text, text_input},
+    widget::{button, checkbox, column, container, row, text, text_input},
 };
 
 use crate::models::{connection_form::ConnectionForm, message::Message};
@@ -29,6 +29,25 @@ pub fn connection_modal(form: &ConnectionForm) -> Element<'_, Message> {
             &form.password,
             Message::ConnectionFormPasswordChanged
         ),
+        checkbox(form.active_mode)
+            .label("Modo activo (desactivado = pasivo)")
+            .on_toggle(Message::ConnectionFormModeChanged)
+            .text_size(12)
+            .style(checkbox_style),
+        checkbox(form.use_ftps)
+            .label("FTPS explícito (AUTH TLS)")
+            .on_toggle(Message::ConnectionFormUseFtpsChanged)
+            .text_size(12)
+            .style(checkbox_style),
+        checkbox(form.accept_invalid_certs)
+            .label("Aceptar certificados inválidos")
+            .on_toggle_maybe(if form.use_ftps {
+                Some(Message::ConnectionFormAcceptInvalidCertsChanged)
+            } else {
+                None
+            })
+            .text_size(12)
+            .style(checkbox_style),
     ]
     .spacing(10);
 
@@ -176,4 +195,21 @@ fn field_secret<'a>(
     ]
     .spacing(4)
     .into()
+}
+
+fn checkbox_style(_theme: &iced::Theme, status: checkbox::Status) -> checkbox::Style {
+    checkbox::Style {
+        background: iced::Background::Color(BG_BASE),
+        icon_color: BG_BASE,
+        border: Border {
+            color: match status {
+                checkbox::Status::Active { .. } => ACCENT,
+                checkbox::Status::Hovered { .. } => ACCENT,
+                _ => BORDER,
+            },
+            width: 1.0,
+            radius: 3.0.into(),
+        },
+        text_color: Some(TEXT_PRIMARY),
+    }
 }
